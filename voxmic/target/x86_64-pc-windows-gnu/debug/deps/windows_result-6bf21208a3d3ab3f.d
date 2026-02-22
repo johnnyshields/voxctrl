@@ -1,0 +1,10 @@
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/windows_result-6bf21208a3d3ab3f.d: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/bindings.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/com.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/strings.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/error.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/hresult.rs
+
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/libwindows_result-6bf21208a3d3ab3f.rmeta: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/bindings.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/com.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/strings.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/error.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/hresult.rs
+
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/lib.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/bindings.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/com.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/strings.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/error.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.1.2/src/hresult.rs:

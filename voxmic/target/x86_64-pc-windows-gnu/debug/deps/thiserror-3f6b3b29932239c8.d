@@ -1,0 +1,12 @@
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/thiserror-3f6b3b29932239c8.d: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/thiserror-65d8a9231539a9b4/out/private.rs
+
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/libthiserror-3f6b3b29932239c8.rmeta: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/thiserror-65d8a9231539a9b4/out/private.rs
+
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/thiserror-65d8a9231539a9b4/out/private.rs:
+
+# env-dep:OUT_DIR=/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/thiserror-65d8a9231539a9b4/out

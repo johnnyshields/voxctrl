@@ -1,0 +1,36 @@
+[package]
+name = "voxmic"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform tray dictation app — hold Ctrl+Win to record, transcribe via Voxtral"
+
+[dependencies]
+# Tray + menu + hotkey (Tauri ecosystem — designed to work together)
+tray-icon     = "0.19"
+global-hotkey = "0.6"
+winit         = "0.30"
+muda          = "0.15"
+
+# Audio capture
+cpal  = "0.15"   # WASAPI (Win) / CoreAudio (Mac) / ALSA (Linux)
+hound = "3.5"    # WAV encode/decode
+
+# Voxtral backend
+ureq = { version = "2", features = ["json"] }
+
+# Text injection
+enigo = "0.2"
+
+# Config
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+log    = "0.4"
+env_logger = "0.11"
+
+# Temp files
+tempfile = "3"
+
+# Error handling
+anyhow = "1"

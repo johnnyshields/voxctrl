@@ -1,0 +1,12 @@
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/serde-402441fd850282c1.d: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/serde-49d05a17c1b527ee/out/private.rs
+
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/libserde-402441fd850282c1.rmeta: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/serde-49d05a17c1b527ee/out/private.rs
+
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/serde-49d05a17c1b527ee/out/private.rs:
+
+# env-dep:OUT_DIR=/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/build/serde-49d05a17c1b527ee/out
