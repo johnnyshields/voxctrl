@@ -21,10 +21,10 @@ WORKDIR /app
 COPY . .
 
 # Build for Linux (native)
-RUN cargo build --release --manifest-path voxctrl/Cargo.toml
+RUN cargo build --release
 
 # Build for Windows (cross-compile)
-RUN cargo build --release --manifest-path voxctrl/Cargo.toml --target x86_64-pc-windows-gnu
+RUN cargo build --release --target x86_64-pc-windows-gnu
 
 # Build Windows installer
-RUN makensis voxctrl/installer.nsi
+RUN makensis installer.nsi

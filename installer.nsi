@@ -1,6 +1,6 @@
 ; NSIS installer script for voxctrl
-; Build (from repo root): makensis voxctrl/installer.nsi
-; Output: voxctrl/voxctrl-0.2.0-setup.exe (OutFile resolves relative to script dir)
+; Build: makensis installer.nsi
+; Output: voxctrl-0.2.0-setup.exe (OutFile resolves relative to script dir)
 
 !define PRODUCT_NAME "Voxctrl"
 !define PRODUCT_EXE "voxctrl.exe"
