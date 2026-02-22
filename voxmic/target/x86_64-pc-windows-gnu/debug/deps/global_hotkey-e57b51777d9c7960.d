@@ -1,9 +1,0 @@
-/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/global_hotkey-e57b51777d9c7960.d: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/error.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/hotkey.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/mod.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/windows/mod.rs
-
-/mnt/c/workspace/voxmic-worktree/feat-rust-crossplatform-tray-app/supervisor/voxmic/target/x86_64-pc-windows-gnu/debug/deps/libglobal_hotkey-e57b51777d9c7960.rmeta: /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/lib.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/error.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/hotkey.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/mod.rs /home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/windows/mod.rs
-
-/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/lib.rs:
-/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/error.rs:
-/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/hotkey.rs:
-/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/mod.rs:
-/home/shields/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/windows/mod.rs:
