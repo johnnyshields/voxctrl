@@ -2,12 +2,6 @@
 
 #[cfg(feature = "stt-voxtral-http")]
 pub mod voxtral_http;
-#[cfg(feature = "stt-whisper-cpp")]
-pub mod whisper_cpp;
-#[cfg(feature = "stt-whisper-native")]
-pub mod whisper_native;
-#[cfg(feature = "stt-voxtral-native")]
-pub mod voxtral_native;
 
 use std::path::{Path, PathBuf};
 
@@ -24,15 +18,28 @@ pub trait Transcriber: Send + Sync {
     fn is_available(&self) -> bool;
 }
 
+/// Function signature for an external factory that can create heavy STT backends.
+///
+/// Called by `create_transcriber()` for backend names it doesn't know.
+/// Returns `Some(transcriber)` if the factory handles this backend,
+/// or `None` to fall through to the "unknown backend" error.
+pub type SttFactory = dyn Fn(&SttConfig, Option<PathBuf>) -> Option<anyhow::Result<Box<dyn Transcriber>>> + Send + Sync;
+
 // ── Pending placeholder ─────────────────────────────────────────────────
 
 /// Placeholder transcriber returned when a backend can't be initialised
 /// (missing feature, failed download, missing model, etc.).
 ///
 /// The app stays alive; transcription attempts return a clear error.
-struct PendingTranscriber {
+pub struct PendingTranscriber {
     reason: String,
     backend: String,
+}
+
+impl PendingTranscriber {
+    pub fn new(backend: String, reason: String) -> Self {
+        Self { reason, backend }
+    }
 }
 
 impl Transcriber for PendingTranscriber {
@@ -52,10 +59,17 @@ impl Transcriber for PendingTranscriber {
 /// `model_dir` is the resolved local path for backends that need local model files
 /// (e.g. voxtral-native). Other backends ignore it.
 ///
+/// `extra_factory` allows external crates (e.g. voxctrl-stt) to inject heavy
+/// backends without this crate needing to depend on their ML libraries.
+///
 /// Never fails fatally — returns a `PendingTranscriber` placeholder when the
 /// requested backend can't be initialised (feature not compiled, model missing,
 /// download failure, etc.).
-pub fn create_transcriber(cfg: &SttConfig, model_dir: Option<PathBuf>) -> anyhow::Result<Box<dyn Transcriber>> {
+pub fn create_transcriber(
+    cfg: &SttConfig,
+    model_dir: Option<PathBuf>,
+    extra_factory: Option<&SttFactory>,
+) -> anyhow::Result<Box<dyn Transcriber>> {
     // Note: no `?` inside arms — errors must be captured in `result`
     // so the PendingTranscriber fallback below can handle them.
     let result: anyhow::Result<Box<dyn Transcriber>> = match cfg.backend.as_str() {
@@ -65,25 +79,18 @@ pub fn create_transcriber(cfg: &SttConfig, model_dir: Option<PathBuf>) -> anyhow
             #[cfg(not(feature = "stt-voxtral-http"))]
             { Err(anyhow::anyhow!("stt-voxtral-http feature not compiled in")) }
         }
-        "whisper-cpp" => {
-            #[cfg(feature = "stt-whisper-cpp")]
-            { whisper_cpp::WhisperCppTranscriber::new(cfg).map(|t| Box::new(t) as _) }
-            #[cfg(not(feature = "stt-whisper-cpp"))]
-            { Err(anyhow::anyhow!("stt-whisper-cpp feature not compiled in")) }
+        other => {
+            // Try the external factory first (for heavy ML backends)
+            if let Some(factory) = extra_factory {
+                if let Some(factory_result) = factory(cfg, model_dir) {
+                    factory_result
+                } else {
+                    Err(anyhow::anyhow!("Unknown STT backend: {other}"))
+                }
+            } else {
+                Err(anyhow::anyhow!("Unknown STT backend: {other}"))
+            }
         }
-        "whisper-native" => {
-            #[cfg(feature = "stt-whisper-native")]
-            { whisper_native::WhisperNativeTranscriber::new(cfg).map(|t| Box::new(t) as _) }
-            #[cfg(not(feature = "stt-whisper-native"))]
-            { Err(anyhow::anyhow!("stt-whisper-native feature not compiled in")) }
-        }
-        "voxtral-native" => {
-            #[cfg(feature = "stt-voxtral-native")]
-            { voxtral_native::VoxtralNativeTranscriber::new(model_dir).map(|t| Box::new(t) as _) }
-            #[cfg(not(feature = "stt-voxtral-native"))]
-            { Err(anyhow::anyhow!("stt-voxtral-native feature not compiled in")) }
-        }
-        other => Err(anyhow::anyhow!("Unknown STT backend: {other}")),
     };
 
     match result {
