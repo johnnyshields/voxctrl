@@ -197,6 +197,12 @@ fn main() -> Result<()> {
         .format_timestamp_secs()
         .init();
 
+    // Subprocess mode: model manager runs as its own eframe app (separate EventLoop).
+    #[cfg(feature = "gui")]
+    if std::env::args().any(|a| a == "--manage-models") {
+        return ui::run_model_manager_standalone();
+    }
+
     log::info!("─── voxctrl v{} starting ───", env!("CARGO_PKG_VERSION"));
 
     let ui_mode = pick_ui_mode();

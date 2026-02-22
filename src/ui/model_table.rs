@@ -6,30 +6,58 @@ pub struct ModelManagerApp {
     active_tab: ModelCategory,
 }
 
-/// Open the model manager window on a background thread.
-pub fn open_model_manager(registry: Arc<Mutex<ModelRegistry>>) {
-    std::thread::Builder::new()
-        .name("model-manager-ui".into())
-        .spawn(move || {
-            let options = eframe::NativeOptions {
-                viewport: egui::ViewportBuilder::default()
-                    .with_inner_size([600.0, 400.0])
-                    .with_title("voxctrl — Model Manager"),
-                ..Default::default()
-            };
+/// Open the model manager as a subprocess.
+///
+/// winit 0.30 forbids multiple EventLoops per process, so we can't call
+/// `eframe::run_native` from a thread while the main GUI loop is running.
+/// Instead, re-exec ourselves with `--manage-models`.
+pub fn open_model_manager(_registry: Arc<Mutex<ModelRegistry>>) {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!("Cannot locate own exe for model manager: {e}");
+            return;
+        }
+    };
 
-            if let Err(e) = eframe::run_native(
-                "voxctrl — Model Manager",
-                options,
-                Box::new(move |_cc| Ok(Box::new(ModelManagerApp {
-                    registry,
-                    active_tab: ModelCategory::Stt,
-                }))),
-            ) {
-                log::error!("Model manager window error: {e}");
-            }
-        })
-        .expect("spawn model-manager-ui thread");
+    match std::process::Command::new(exe)
+        .arg("--manage-models")
+        .spawn()
+    {
+        Ok(_) => log::info!("Model manager subprocess launched"),
+        Err(e) => log::error!("Failed to spawn model manager: {e}"),
+    }
+}
+
+/// Run the model manager as a standalone eframe app (called via `--manage-models`).
+pub fn run_model_manager_standalone() -> anyhow::Result<()> {
+    let mut registry = crate::models::ModelRegistry::new(crate::models::catalog::all_models());
+    registry.scan_cache();
+
+    // Mark in-use model from config
+    let cfg = crate::config::load_config();
+    if let Some(model_id) = crate::models::catalog::required_model_id(&cfg) {
+        registry.set_in_use(&model_id);
+    }
+
+    let registry = Arc::new(Mutex::new(registry));
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([600.0, 400.0])
+            .with_title("voxctrl — Model Manager"),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "voxctrl — Model Manager",
+        options,
+        Box::new(move |_cc| Ok(Box::new(ModelManagerApp {
+            registry,
+            active_tab: ModelCategory::Stt,
+        }))),
+    )
+    .map_err(|e| anyhow::anyhow!("Model manager error: {e}"))
 }
 
 impl eframe::App for ModelManagerApp {

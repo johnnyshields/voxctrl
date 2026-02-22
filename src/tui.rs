@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
@@ -25,7 +25,7 @@ pub fn run_tui(
     std::io::stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
 
-    log::info!("TUI mode — Space=toggle, q=quit");
+    log::info!("TUI mode — Space=toggle, q/Ctrl-C=quit");
 
     loop {
         let status = *state.status.lock().unwrap();
@@ -55,7 +55,7 @@ pub fn run_tui(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(" voxctrl ")
-                        .title_bottom(" Space=toggle  q=quit "),
+                        .title_bottom(" Space=toggle  q/Ctrl-C=quit "),
                 );
 
             // Center vertically
@@ -78,12 +78,13 @@ pub fn run_tui(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char(' ') => {
+                match (key.code, key.modifiers) {
+                    (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => break,
+                    (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => break,
+                    (KeyCode::Char(' '), _) => {
                         crate::recording::toggle_recording(&state, &cfg, pipeline.clone());
                     }
-                    _ => {}
+                    (_, _) => {}
                 }
             }
         }
