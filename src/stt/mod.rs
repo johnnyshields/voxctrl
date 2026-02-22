@@ -56,6 +56,8 @@ impl Transcriber for PendingTranscriber {
 /// requested backend can't be initialised (feature not compiled, model missing,
 /// download failure, etc.).
 pub fn create_transcriber(cfg: &SttConfig, model_dir: Option<PathBuf>) -> anyhow::Result<Box<dyn Transcriber>> {
+    // Note: no `?` inside arms — errors must be captured in `result`
+    // so the PendingTranscriber fallback below can handle them.
     let result: anyhow::Result<Box<dyn Transcriber>> = match cfg.backend.as_str() {
         "voxtral-http" => {
             #[cfg(feature = "stt-voxtral-http")]
@@ -65,19 +67,19 @@ pub fn create_transcriber(cfg: &SttConfig, model_dir: Option<PathBuf>) -> anyhow
         }
         "whisper-cpp" => {
             #[cfg(feature = "stt-whisper-cpp")]
-            { Ok(Box::new(whisper_cpp::WhisperCppTranscriber::new(cfg)?)) }
+            { whisper_cpp::WhisperCppTranscriber::new(cfg).map(|t| Box::new(t) as _) }
             #[cfg(not(feature = "stt-whisper-cpp"))]
             { Err(anyhow::anyhow!("stt-whisper-cpp feature not compiled in")) }
         }
         "whisper-native" => {
             #[cfg(feature = "stt-whisper-native")]
-            { Ok(Box::new(whisper_native::WhisperNativeTranscriber::new(cfg)?)) }
+            { whisper_native::WhisperNativeTranscriber::new(cfg).map(|t| Box::new(t) as _) }
             #[cfg(not(feature = "stt-whisper-native"))]
             { Err(anyhow::anyhow!("stt-whisper-native feature not compiled in")) }
         }
         "voxtral-native" => {
             #[cfg(feature = "stt-voxtral-native")]
-            { Ok(Box::new(voxtral_native::VoxtralNativeTranscriber::new(model_dir)?)) }
+            { voxtral_native::VoxtralNativeTranscriber::new(model_dir).map(|t| Box::new(t) as _) }
             #[cfg(not(feature = "stt-voxtral-native"))]
             { Err(anyhow::anyhow!("stt-voxtral-native feature not compiled in")) }
         }
