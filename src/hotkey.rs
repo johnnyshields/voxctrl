@@ -11,7 +11,7 @@ use crate::pipeline::Pipeline;
 use crate::SharedState;
 
 /// Parse a shortcut string like "Ctrl+Super+Space" into a `HotKey`.
-fn parse_shortcut(s: &str) -> Result<HotKey> {
+pub fn parse_shortcut(s: &str) -> Result<HotKey> {
     let mut modifiers = Modifiers::empty();
     let mut key_code: Option<Code> = None;
 

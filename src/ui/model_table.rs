@@ -1,6 +1,10 @@
 use std::sync::{Arc, Mutex};
+
+use global_hotkey::hotkey::HotKey;
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+
 use crate::config;
-use crate::models::{ModelCategory, ModelRegistry, DownloadStatus};
+use crate::models::{DownloadStatus, ModelCategory, ModelRegistry};
 
 // ── Option tables for combo boxes ─────────────────────────────────────────
 
@@ -31,17 +35,127 @@ fn lookup_label(options: &'static [(&str, &str)], value: &str) -> &'static str {
         .unwrap_or("Unknown")
 }
 
+// ── Key capture helpers ───────────────────────────────────────────────────
+
+/// Map an egui::Key to the token string expected by `parse_key_code()`.
+fn egui_key_to_shortcut_token(key: egui::Key) -> Option<&'static str> {
+    match key {
+        egui::Key::A => Some("A"),
+        egui::Key::B => Some("B"),
+        egui::Key::C => Some("C"),
+        egui::Key::D => Some("D"),
+        egui::Key::E => Some("E"),
+        egui::Key::F => Some("F"),
+        egui::Key::G => Some("G"),
+        egui::Key::H => Some("H"),
+        egui::Key::I => Some("I"),
+        egui::Key::J => Some("J"),
+        egui::Key::K => Some("K"),
+        egui::Key::L => Some("L"),
+        egui::Key::M => Some("M"),
+        egui::Key::N => Some("N"),
+        egui::Key::O => Some("O"),
+        egui::Key::P => Some("P"),
+        egui::Key::Q => Some("Q"),
+        egui::Key::R => Some("R"),
+        egui::Key::S => Some("S"),
+        egui::Key::T => Some("T"),
+        egui::Key::U => Some("U"),
+        egui::Key::V => Some("V"),
+        egui::Key::W => Some("W"),
+        egui::Key::X => Some("X"),
+        egui::Key::Y => Some("Y"),
+        egui::Key::Z => Some("Z"),
+        egui::Key::Num0 => Some("0"),
+        egui::Key::Num1 => Some("1"),
+        egui::Key::Num2 => Some("2"),
+        egui::Key::Num3 => Some("3"),
+        egui::Key::Num4 => Some("4"),
+        egui::Key::Num5 => Some("5"),
+        egui::Key::Num6 => Some("6"),
+        egui::Key::Num7 => Some("7"),
+        egui::Key::Num8 => Some("8"),
+        egui::Key::Num9 => Some("9"),
+        egui::Key::Space => Some("Space"),
+        egui::Key::Enter => Some("Enter"),
+        egui::Key::Tab => Some("Tab"),
+        egui::Key::Backspace => Some("Backspace"),
+        egui::Key::Delete => Some("Delete"),
+        egui::Key::Insert => Some("Insert"),
+        egui::Key::Home => Some("Home"),
+        egui::Key::End => Some("End"),
+        egui::Key::PageUp => Some("PageUp"),
+        egui::Key::PageDown => Some("PageDown"),
+        egui::Key::ArrowUp => Some("Up"),
+        egui::Key::ArrowDown => Some("Down"),
+        egui::Key::ArrowLeft => Some("Left"),
+        egui::Key::ArrowRight => Some("Right"),
+        egui::Key::F1 => Some("F1"),
+        egui::Key::F2 => Some("F2"),
+        egui::Key::F3 => Some("F3"),
+        egui::Key::F4 => Some("F4"),
+        egui::Key::F5 => Some("F5"),
+        egui::Key::F6 => Some("F6"),
+        egui::Key::F7 => Some("F7"),
+        egui::Key::F8 => Some("F8"),
+        egui::Key::F9 => Some("F9"),
+        egui::Key::F10 => Some("F10"),
+        egui::Key::F11 => Some("F11"),
+        egui::Key::F12 => Some("F12"),
+        // Escape is handled separately (cancel capture)
+        _ => None,
+    }
+}
+
+/// Build a shortcut string like "Ctrl+Super+Space" from egui modifiers + key.
+fn build_shortcut_string(
+    modifiers: &egui::Modifiers,
+    key: egui::Key,
+    include_super: bool,
+) -> Option<String> {
+    let token = egui_key_to_shortcut_token(key)?;
+    let mut parts = Vec::new();
+    if modifiers.ctrl || modifiers.command {
+        parts.push("Ctrl");
+    }
+    if modifiers.alt {
+        parts.push("Alt");
+    }
+    if modifiers.shift {
+        parts.push("Shift");
+    }
+    if include_super {
+        parts.push("Super");
+    }
+    parts.push(token);
+    Some(parts.join("+"))
+}
+
 // ── App state ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureState {
+    Idle,
+    Listening,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Settings,
     Models,
+    Test,
+}
+
+struct TestHotkeyState {
+    _manager: GlobalHotKeyManager,
+    hotkey_id: u32,
+    pressed: bool,
 }
 
 pub struct SettingsApp {
     registry: Arc<Mutex<ModelRegistry>>,
     tab: Tab,
+    prev_tab: Tab,
     model_tab: ModelCategory,
     // Editable config fields
     hotkey_shortcut: String,
@@ -49,6 +163,12 @@ pub struct SettingsApp {
     whisper_model: String,
     vad_backend: String,
     saved_flash: Option<std::time::Instant>,
+    // Hotkey capture
+    capture_state: CaptureState,
+    hotkey_include_super: bool,
+    // Test tab
+    test_hotkey: Option<TestHotkeyState>,
+    test_hotkey_error: Option<String>,
 }
 
 // ── Subprocess launcher ───────────────────────────────────────────────────
@@ -88,16 +208,27 @@ pub fn run_settings_standalone() -> anyhow::Result<()> {
     }
 
     let registry = Arc::new(Mutex::new(registry));
+    let include_super = cfg
+        .hotkey
+        .shortcut
+        .to_lowercase()
+        .split('+')
+        .any(|t| matches!(t.trim(), "super" | "win" | "meta" | "cmd"));
 
     let app = SettingsApp {
         registry,
         tab: Tab::Settings,
+        prev_tab: Tab::Settings,
         model_tab: ModelCategory::Stt,
         hotkey_shortcut: cfg.hotkey.shortcut.clone(),
         stt_backend: cfg.stt.backend.clone(),
         whisper_model: cfg.stt.whisper_model.clone(),
         vad_backend: cfg.vad.backend.clone(),
         saved_flash: None,
+        capture_state: CaptureState::Idle,
+        hotkey_include_super: include_super,
+        test_hotkey: None,
+        test_hotkey_error: None,
     };
 
     let options = eframe::NativeOptions {
@@ -119,21 +250,91 @@ pub fn run_settings_standalone() -> anyhow::Result<()> {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ── Handle key capture ────────────────────────────────────────
+        if self.capture_state == CaptureState::Listening {
+            let captured = ctx.input(|i| {
+                for event in &i.events {
+                    if let egui::Event::Key {
+                        key,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } = event
+                    {
+                        if *key == egui::Key::Escape {
+                            return Some(None); // cancel
+                        }
+                        if let Some(shortcut) =
+                            build_shortcut_string(modifiers, *key, self.hotkey_include_super)
+                        {
+                            if crate::hotkey::parse_shortcut(&shortcut).is_ok() {
+                                return Some(Some(shortcut));
+                            }
+                        }
+                    }
+                }
+                None
+            });
+
+            match captured {
+                Some(None) => self.capture_state = CaptureState::Idle,
+                Some(Some(shortcut)) => {
+                    self.hotkey_shortcut = shortcut;
+                    self.capture_state = CaptureState::Idle;
+                }
+                None => {}
+            }
+        }
+
+        // ── Handle tab transitions ────────────────────────────────────
+        if self.tab != self.prev_tab {
+            if self.prev_tab == Tab::Test {
+                self.unregister_test_hotkey();
+            }
+            if self.tab == Tab::Test {
+                self.register_test_hotkey();
+            }
+            self.prev_tab = self.tab;
+        }
+
+        // ── Poll hotkey events on Test tab ────────────────────────────
+        if self.tab == Tab::Test {
+            if let Some(ref mut state) = self.test_hotkey {
+                while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                    if event.id == state.hotkey_id {
+                        state.pressed = match event.state {
+                            HotKeyState::Pressed => true,
+                            HotKeyState::Released => false,
+                        };
+                    }
+                }
+            }
+        }
+
+        // ── Draw UI ───────────────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Top-level tab bar
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::Settings, "Settings");
                 ui.selectable_value(&mut self.tab, Tab::Models, "Models");
+                ui.selectable_value(&mut self.tab, Tab::Test, "Test");
             });
             ui.separator();
 
             match self.tab {
                 Tab::Settings => self.draw_settings_tab(ui),
                 Tab::Models => self.draw_models_tab(ui),
+                Tab::Test => self.draw_test_tab(ui),
             }
         });
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        let repaint_ms =
+            if self.capture_state == CaptureState::Listening || self.tab == Tab::Test {
+                50
+            } else {
+                500
+            };
+        ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }
 }
 
@@ -145,10 +346,44 @@ impl SettingsApp {
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
+                // ── Hotkey capture widget ─────────────────────────────
                 ui.label("Hotkey");
-                ui.text_edit_singleline(&mut self.hotkey_shortcut);
+                ui.horizontal(|ui| match self.capture_state {
+                    CaptureState::Idle => {
+                        let label = if self.hotkey_shortcut.is_empty() {
+                            "Click to set hotkey..."
+                        } else {
+                            &self.hotkey_shortcut
+                        };
+                        if ui.button(label).clicked() {
+                            self.capture_state = CaptureState::Listening;
+                        }
+                        if !self.hotkey_shortcut.is_empty() && ui.small_button("\u{2715}").clicked()
+                        {
+                            self.hotkey_shortcut.clear();
+                        }
+                    }
+                    CaptureState::Listening => {
+                        ui.add(egui::Button::new(
+                            egui::RichText::new("Press keys...").color(egui::Color32::YELLOW),
+                        ));
+                        if ui.button("Cancel").clicked() {
+                            self.capture_state = CaptureState::Idle;
+                        }
+                    }
+                });
                 ui.end_row();
 
+                // ── Super checkbox ────────────────────────────────────
+                ui.label("");
+                let old_super = self.hotkey_include_super;
+                ui.checkbox(&mut self.hotkey_include_super, "Include Super/Win key");
+                if self.hotkey_include_super != old_super && !self.hotkey_shortcut.is_empty() {
+                    self.toggle_super_in_shortcut();
+                }
+                ui.end_row();
+
+                // ── STT backend ───────────────────────────────────────
                 ui.label("STT Backend");
                 egui::ComboBox::from_id_salt("stt_backend")
                     .selected_text(lookup_label(STT_BACKENDS, &self.stt_backend))
@@ -175,6 +410,7 @@ impl SettingsApp {
                     ui.end_row();
                 }
 
+                // ── VAD backend ───────────────────────────────────────
                 ui.label("VAD Backend");
                 egui::ComboBox::from_id_salt("vad_backend")
                     .selected_text(lookup_label(VAD_BACKENDS, &self.vad_backend))
@@ -201,6 +437,35 @@ impl SettingsApp {
         }
     }
 
+    /// Toggle "Super" in the current shortcut string when the checkbox changes.
+    fn toggle_super_in_shortcut(&mut self) {
+        if self.hotkey_include_super {
+            // Insert Super before the final (key) token
+            let parts: Vec<&str> = self.hotkey_shortcut.split('+').collect();
+            let mut new_parts = Vec::with_capacity(parts.len() + 1);
+            for (i, part) in parts.iter().enumerate() {
+                if i == parts.len() - 1 {
+                    new_parts.push("Super");
+                }
+                new_parts.push(part);
+            }
+            self.hotkey_shortcut = new_parts.join("+");
+        } else {
+            // Remove Super/Win/Meta/Cmd tokens
+            self.hotkey_shortcut = self
+                .hotkey_shortcut
+                .split('+')
+                .filter(|t| {
+                    !matches!(
+                        t.trim().to_lowercase().as_str(),
+                        "super" | "win" | "meta" | "cmd"
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("+");
+        }
+    }
+
     fn save_config(&mut self) {
         let mut cfg = config::load_config();
         cfg.hotkey.shortcut = self.hotkey_shortcut.clone();
@@ -210,6 +475,93 @@ impl SettingsApp {
         config::save_config(&cfg);
         self.saved_flash = Some(std::time::Instant::now());
         log::info!("Config saved");
+    }
+}
+
+// ── Test tab ──────────────────────────────────────────────────────────────
+
+impl SettingsApp {
+    fn draw_test_tab(&mut self, ui: &mut egui::Ui) {
+        if self.hotkey_shortcut.is_empty() {
+            ui.label("No hotkey configured. Set one in the Settings tab first.");
+            return;
+        }
+
+        ui.label(format!("Hotkey: {}", self.hotkey_shortcut));
+        ui.add_space(12.0);
+
+        if let Some(ref error) = self.test_hotkey_error {
+            ui.colored_label(egui::Color32::RED, error);
+            ui.add_space(8.0);
+            if ui.button("Retry").clicked() {
+                self.test_hotkey_error = None;
+                self.register_test_hotkey();
+            }
+            return;
+        }
+
+        if let Some(ref state) = self.test_hotkey {
+            let (color, label) = if state.pressed {
+                (egui::Color32::GREEN, "ACTIVE")
+            } else {
+                (egui::Color32::YELLOW, "Ready")
+            };
+
+            ui.horizontal(|ui| {
+                let radius = 10.0;
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(radius * 2.0, radius * 2.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter()
+                    .circle_filled(rect.center(), radius, color);
+                ui.label(egui::RichText::new(label).color(color).size(18.0));
+            });
+        }
+    }
+
+    fn register_test_hotkey(&mut self) {
+        self.test_hotkey = None;
+        self.test_hotkey_error = None;
+
+        if self.hotkey_shortcut.is_empty() {
+            return;
+        }
+
+        let hotkey: HotKey = match crate::hotkey::parse_shortcut(&self.hotkey_shortcut) {
+            Ok(hk) => hk,
+            Err(e) => {
+                self.test_hotkey_error = Some(format!("Invalid hotkey: {e}"));
+                return;
+            }
+        };
+
+        let manager = match GlobalHotKeyManager::new() {
+            Ok(m) => m,
+            Err(e) => {
+                self.test_hotkey_error = Some(format!("Failed to create hotkey manager: {e}"));
+                return;
+            }
+        };
+
+        let id = hotkey.id();
+        if let Err(e) = manager.register(hotkey) {
+            self.test_hotkey_error = Some(format!(
+                "Failed to register hotkey (is the main app running?): {e}"
+            ));
+            return;
+        }
+
+        self.test_hotkey = Some(TestHotkeyState {
+            _manager: manager,
+            hotkey_id: id,
+            pressed: false,
+        });
+    }
+
+    fn unregister_test_hotkey(&mut self) {
+        self.test_hotkey = None;
+        self.test_hotkey_error = None;
     }
 }
 
