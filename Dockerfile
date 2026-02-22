@@ -5,13 +5,13 @@ FROM rust:1.85-bookworm
 #   libgtk-3-dev      — tray-icon, muda, rfd (system tray, menus, file dialogs)
 #   libxdo-dev        — enigo (simulated keyboard input via xdotool)
 #   mingw-w64         — Windows cross-compilation (x86_64-pc-windows-gnu)
-#   nsis              — NSIS installer compiler (makensis)
+#   wixl              — WiX-compatible MSI compiler (Linux-native)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2-dev \
     libgtk-3-dev \
     libxdo-dev \
     mingw-w64 \
-    nsis \
+    wixl \
     && rm -rf /var/lib/apt/lists/*
 
 # Add Windows cross-compilation target
@@ -26,5 +26,5 @@ RUN cargo build --release
 # Build for Windows (cross-compile)
 RUN cargo build --release --target x86_64-pc-windows-gnu
 
-# Build Windows installer
-RUN makensis installer.nsi
+# Build Windows MSI installer (License.rtf must be in cwd for the UI extension)
+RUN cp wix/License.rtf . && wixl --ext ui -o target/voxctrl-0.2.0-x86_64.msi wix/main.wxs

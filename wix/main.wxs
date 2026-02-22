@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <?define ProductName = "Voxctrl" ?>
+  <?define ProductVersion = "0.2.0" ?>
+  <?define ProductDescription = "Pluggable voice-to-action pipeline" ?>
+  <?define Manufacturer = "voxctrl" ?>
+  <?define UpgradeCode = "e1a1c6d0-4b3a-4f5e-9c2d-8a7b6e5f4d3c" ?>
+  <?define ExeName = "voxctrl.exe" ?>
+
+  <Product Id="*"
+           Name="$(var.ProductName)"
+           Version="$(var.ProductVersion)"
+           Manufacturer="$(var.Manufacturer)"
+           UpgradeCode="$(var.UpgradeCode)"
+           Language="1033">
+
+    <Package Description="$(var.ProductDescription)"
+             Manufacturer="$(var.Manufacturer)"
+             InstallerVersion="200"
+             Compressed="yes"
+             InstallScope="perUser" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of $(var.ProductName) is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- WixUI_Minimal dialog set (Welcome/EULA → Progress → Exit) -->
+    <UIRef Id="WixUI_Minimal" />
+    <!-- "Launch Voxctrl" checkbox on the exit dialog (checked by default) -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch $(var.ProductName)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+    <!-- Launch app after install (Type 18: installed file) -->
+    <CustomAction Id="LaunchApp" FileKey="VoxctrlExe" ExeCommand="" Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchApp" After="InstallFinalize">
+        WIXUI_EXITDIALOGOPTIONALCHECKBOX = "1" AND NOT REMOVE
+      </Custom>
+    </InstallExecuteSequence>
+
+    <!-- Per-user install to %LOCALAPPDATA%\Voxctrl -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="INSTALLDIR" Name="$(var.ProductName)">
+
+          <Component Id="MainExecutable" Guid="a1b2c3d4-e5f6-7890-abcd-ef1234567890">
+            <File Id="VoxctrlExe"
+                  Name="$(var.ExeName)"
+                  Source="target/x86_64-pc-windows-gnu/release/$(var.ExeName)"
+                  KeyPath="yes" />
+
+            <!-- Auto-start via HKCU Run key -->
+            <RegistryValue Root="HKCU"
+                           Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                           Name="$(var.ProductName)"
+                           Type="string"
+                           Value="[INSTALLDIR]$(var.ExeName)" />
+          </Component>
+
+        </Directory>
+      </Directory>
+
+      <!-- Start Menu shortcuts -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ProgramMenuDir" Name="$(var.ProductName)">
+
+          <Component Id="StartMenuShortcut" Guid="b2c3d4e5-f6a7-8901-bcde-f12345678901">
+            <Shortcut Id="AppShortcut"
+                      Name="$(var.ProductName)"
+                      Target="[INSTALLDIR]$(var.ExeName)"
+                      WorkingDirectory="INSTALLDIR" />
+            <RemoveFolder Id="RemoveProgramMenuDir" On="uninstall" />
+            <RegistryValue Root="HKCU"
+                           Key="Software\$(var.ProductName)"
+                           Name="StartMenuShortcut"
+                           Type="integer"
+                           Value="1"
+                           KeyPath="yes" />
+          </Component>
+
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Complete" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+  </Product>
+</Wix>

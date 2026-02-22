@@ -1,29 +1,39 @@
-# NSIS Windows Installer for voxctrl
+# MSI Windows Installer for voxctrl (via wixl)
 
 **Date**: 2026-02-22
-**Branch**: feat-test-build-windows/supervisor
+**Branch**: master
 
 ## Summary
 
-Replaced the WiX MSI approach with an NSIS installer that can be cross-compiled from
-Linux using `makensis`. This avoids WiX licensing concerns and runs natively on Ubuntu.
+Replaced the NSIS `.exe` installer with an MSI built by `wixl` (from the `msitools`
+Debian package). This is a Linux-native WiX-compatible compiler — no Wine or Windows
+toolchain needed. The MSI format is preferred for enterprise/GPO deployment and
+silent installs (`msiexec /i ... /quiet`).
+
+Previously used WiX (replaced due to licensing), then NSIS (replaced here for MSI
+format benefits).
 
 ## Design Decisions
 
-- **Per-user install** to `$LOCALAPPDATA\Voxctrl\` — no admin/UAC required
-- **HKCU Run key** for auto-start instead of scheduled task (simpler, same effect)
+- **Per-user install** to `%LOCALAPPDATA%\Voxctrl\` — `InstallScope="perUser"`, no UAC
+- **HKCU Run key** for auto-start (registry value in the main component)
 - **No config.json bundled** — app creates defaults when no config found
-- **No .ico file** — app generates tray icons programmatically; installer uses NSIS default
-- **LZMA compression** for smaller installer size
+- **No .ico file** — app generates tray icons programmatically
+- **Start Menu shortcut** with a dummy registry key as KeyPath (WiX requirement)
+- **MajorUpgrade** element handles upgrades by UpgradeCode GUID
+- **Forward-slash source paths** in `<File Source="...">` for Linux cross-build
 
 ## Files
 
-- `voxctrl/installer.nsi` — new NSIS installer script
-- `Dockerfile` — added `nsis` package and installer build step
+- `wix/main.wxs` — WiX manifest (replaces `installer.nsi`)
+- `Dockerfile` — uses `msitools` package, runs `wixl` to produce MSI
 
-## Verification
+## Build
 
 ```bash
-makensis voxctrl/installer.nsi    # produces voxctrl/voxctrl-0.2.0-setup.exe
-file voxctrl/voxctrl-0.2.0-setup.exe  # PE32 executable
+# In Docker (or locally with msitools installed):
+wixl -o target/voxctrl-0.2.0-x86_64.msi wix/main.wxs
+
+# Validate XML without the actual .exe present:
+wixl -o /dev/null wix/main.wxs  # errors on missing source file, but validates XML
 ```
