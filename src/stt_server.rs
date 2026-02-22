@@ -1,30 +1,33 @@
-//! STT TCP server — proxies transcription requests to the pipeline's STT backend.
+//! STT named-pipe server — proxies transcription requests to the pipeline's STT backend.
 //!
-//! Wire protocol (localhost only, length-prefixed):
+//! Wire protocol (length-prefixed):
 //!   Request:  [4 bytes: WAV len u32 BE] [N bytes: WAV data]
 //!   Response: [1 byte: status 0=ok 1=err] [4 bytes: text len u32 BE] [N bytes: UTF-8 text]
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
+use interprocess::local_socket::{ListenerOptions, ToNsName};
+use interprocess::local_socket::traits::ListenerExt;
 
 use crate::pipeline::Pipeline;
 
 const MAX_PAYLOAD: u32 = 100_000_000; // 100 MB
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Start the STT TCP server on a background thread.
-///
-/// Binds to `127.0.0.1:{port}` and spawns a thread per connection.
-pub fn start(pipeline: Arc<Pipeline>, port: u16) -> Result<()> {
-    let addr = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(&addr)
-        .with_context(|| format!("Failed to bind STT server on {addr}"))?;
+const PIPE_NAME: &str = "voxctrl-stt";
 
-    log::info!("STT server listening on {addr}");
+/// Start the STT named-pipe server on a background thread.
+pub fn start(pipeline: Arc<Pipeline>) -> Result<()> {
+    let name = PIPE_NAME.to_ns_name::<interprocess::local_socket::GenericNamespaced>()
+        .context("Failed to create namespaced pipe name")?;
+
+    let listener = ListenerOptions::new()
+        .name(name)
+        .create_sync()
+        .context("Failed to create STT named-pipe listener")?;
+
+    log::info!("STT server listening on named pipe: {PIPE_NAME}");
 
     std::thread::Builder::new()
         .name("stt-server".into())
@@ -48,10 +51,7 @@ pub fn start(pipeline: Arc<Pipeline>, port: u16) -> Result<()> {
     Ok(())
 }
 
-fn handle_connection(mut stream: TcpStream, pipeline: &Pipeline) -> Result<()> {
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
-
+fn handle_connection(mut stream: impl Read + Write, pipeline: &Pipeline) -> Result<()> {
     // Read WAV length
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
@@ -84,7 +84,7 @@ fn handle_connection(mut stream: TcpStream, pipeline: &Pipeline) -> Result<()> {
     }
 }
 
-fn send_ok(stream: &mut TcpStream, text: &str) -> Result<()> {
+fn send_ok(stream: &mut impl Write, text: &str) -> Result<()> {
     let text_bytes = text.as_bytes();
     let mut buf = Vec::with_capacity(1 + 4 + text_bytes.len());
     buf.push(0); // status: ok
@@ -94,7 +94,7 @@ fn send_ok(stream: &mut TcpStream, text: &str) -> Result<()> {
     Ok(())
 }
 
-fn send_error(stream: &mut TcpStream, msg: &str) -> Result<()> {
+fn send_error(stream: &mut impl Write, msg: &str) -> Result<()> {
     let msg_bytes = msg.as_bytes();
     let mut buf = Vec::with_capacity(1 + 4 + msg_bytes.len());
     buf.push(1); // status: error

@@ -24,36 +24,75 @@ pub trait Transcriber: Send + Sync {
     fn is_available(&self) -> bool;
 }
 
+// ── Pending placeholder ─────────────────────────────────────────────────
+
+/// Placeholder transcriber returned when a backend can't be initialised
+/// (missing feature, failed download, missing model, etc.).
+///
+/// The app stays alive; transcription attempts return a clear error.
+struct PendingTranscriber {
+    reason: String,
+    backend: String,
+}
+
+impl Transcriber for PendingTranscriber {
+    fn transcribe(&self, _wav_path: &Path) -> anyhow::Result<String> {
+        anyhow::bail!("{} — {}", self.backend, self.reason)
+    }
+    fn name(&self) -> &str {
+        "pending"
+    }
+    fn is_available(&self) -> bool {
+        false
+    }
+}
+
 /// Create an STT backend based on config.
 ///
 /// `model_dir` is the resolved local path for backends that need local model files
 /// (e.g. voxtral-native). Other backends ignore it.
+///
+/// Never fails fatally — returns a `PendingTranscriber` placeholder when the
+/// requested backend can't be initialised (feature not compiled, model missing,
+/// download failure, etc.).
 pub fn create_transcriber(cfg: &SttConfig, model_dir: Option<PathBuf>) -> anyhow::Result<Box<dyn Transcriber>> {
-    match cfg.backend.as_str() {
+    let result: anyhow::Result<Box<dyn Transcriber>> = match cfg.backend.as_str() {
         "voxtral-http" => {
             #[cfg(feature = "stt-voxtral-http")]
-            return Ok(Box::new(voxtral_http::VoxtralHttpTranscriber::new(cfg)));
+            { Ok(Box::new(voxtral_http::VoxtralHttpTranscriber::new(cfg))) }
             #[cfg(not(feature = "stt-voxtral-http"))]
-            anyhow::bail!("stt-voxtral-http feature not compiled in");
+            { Err(anyhow::anyhow!("stt-voxtral-http feature not compiled in")) }
         }
         "whisper-cpp" => {
             #[cfg(feature = "stt-whisper-cpp")]
-            return Ok(Box::new(whisper_cpp::WhisperCppTranscriber::new(cfg)?));
+            { Ok(Box::new(whisper_cpp::WhisperCppTranscriber::new(cfg)?)) }
             #[cfg(not(feature = "stt-whisper-cpp"))]
-            anyhow::bail!("stt-whisper-cpp feature not compiled in");
+            { Err(anyhow::anyhow!("stt-whisper-cpp feature not compiled in")) }
         }
         "whisper-native" => {
             #[cfg(feature = "stt-whisper-native")]
-            return Ok(Box::new(whisper_native::WhisperNativeTranscriber::new(cfg)?));
+            { Ok(Box::new(whisper_native::WhisperNativeTranscriber::new(cfg)?)) }
             #[cfg(not(feature = "stt-whisper-native"))]
-            anyhow::bail!("stt-whisper-native feature not compiled in");
+            { Err(anyhow::anyhow!("stt-whisper-native feature not compiled in")) }
         }
         "voxtral-native" => {
             #[cfg(feature = "stt-voxtral-native")]
-            return Ok(Box::new(voxtral_native::VoxtralNativeTranscriber::new(model_dir)?));
+            { Ok(Box::new(voxtral_native::VoxtralNativeTranscriber::new(model_dir)?)) }
             #[cfg(not(feature = "stt-voxtral-native"))]
-            anyhow::bail!("stt-voxtral-native feature not compiled in");
+            { Err(anyhow::anyhow!("stt-voxtral-native feature not compiled in")) }
         }
-        other => anyhow::bail!("Unknown STT backend: {other}"),
+        other => Err(anyhow::anyhow!("Unknown STT backend: {other}")),
+    };
+
+    match result {
+        Ok(t) => Ok(t),
+        Err(e) => {
+            let reason = format!("{e:#}");
+            log::warn!("STT backend '{}' unavailable: {reason} — using pending placeholder", cfg.backend);
+            Ok(Box::new(PendingTranscriber {
+                backend: cfg.backend.clone(),
+                reason,
+            }))
+        }
     }
 }

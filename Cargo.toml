@@ -5,7 +5,7 @@ edition = "2021"
 description = "Pluggable voice-to-action pipeline — mic → VAD → STT → router → action"
 
 [features]
-default = ["stt-voxtral-http", "stt-voxtral-native", "vad-energy", "gui", "tui"]
+default = ["stt-voxtral-http", "stt-voxtral-native", "stt-whisper-native", "vad-energy", "gui", "tui"]
 
 # STT backends
 stt-voxtral-http   = ["dep:ureq"]
@@ -83,6 +83,9 @@ burn = { version = "0.20", default-features = false, features = ["wgpu"], option
 
 # VAD: silero (optional)
 ort = { version = "2.0.0-rc.9", optional = true }
+
+# IPC: named pipe between Settings subprocess and main app
+interprocess = "2"
 
 # Model management
 dirs = "5"

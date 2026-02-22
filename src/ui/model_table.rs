@@ -392,11 +392,19 @@ impl eframe::App for SettingsApp {
             }
         });
 
+        let has_download = {
+            let reg = self.registry.lock().unwrap();
+            reg.entries()
+                .iter()
+                .any(|e| matches!(e.status, DownloadStatus::Downloading { .. }))
+        };
         let repaint_ms =
             if self.capture_state == CaptureState::Listening
                 || self.tab == Tab::Test
             {
                 50
+            } else if has_download {
+                200
             } else {
                 500
             };
@@ -454,8 +462,27 @@ impl SettingsApp {
                         }
                     }
                     CaptureState::Listening => {
+                        let mods = ui.ctx().input(|i| i.modifiers);
+                        let mut parts: Vec<&str> = Vec::new();
+                        if mods.ctrl || mods.command {
+                            parts.push("Ctrl");
+                        }
+                        if mods.alt {
+                            parts.push("Alt");
+                        }
+                        if mods.shift {
+                            parts.push("Shift");
+                        }
+                        if self.hotkey_include_super {
+                            parts.push("Super");
+                        }
+                        let text = if parts.is_empty() {
+                            "Press keys...".to_string()
+                        } else {
+                            format!("{}+...", parts.join("+"))
+                        };
                         ui.add(egui::Button::new(
-                            egui::RichText::new("Press keys...").color(egui::Color32::YELLOW),
+                            egui::RichText::new(text).color(egui::Color32::YELLOW),
                         ));
                         if ui.button("Cancel").clicked() {
                             self.capture_state = CaptureState::Idle;
@@ -970,8 +997,16 @@ fn transcribe_chunks(
     }
     writer.finalize()?;
 
-    let transcriber = crate::stt::create_transcriber(stt_cfg, None)?;
-    transcriber.transcribe(tmp.path())
+    // voxtral-http talks directly to an external llama-server over HTTP.
+    // All other backends route through the main app's named-pipe STT server,
+    // which owns the pipeline and loaded models.
+    if stt_cfg.backend.contains("-http") {
+        let transcriber = crate::stt::create_transcriber(stt_cfg, None)?;
+        transcriber.transcribe(tmp.path())
+    } else {
+        let wav_data = std::fs::read(tmp.path())?;
+        crate::stt_client::transcribe_via_server(&wav_data)
+    }
 }
 
 // ── Models tab ────────────────────────────────────────────────────────────
@@ -1052,7 +1087,11 @@ impl SettingsApp {
                             ui.label("Not installed");
                         }
                         DownloadStatus::Downloading { progress_pct } => {
-                            ui.label(format!("Downloading {progress_pct}%"));
+                            ui.add(
+                                egui::ProgressBar::new(*progress_pct as f32 / 100.0)
+                                    .text(format!("{}%", progress_pct))
+                                    .desired_width(100.0),
+                            );
                         }
                         DownloadStatus::Downloaded { .. } => {
                             if entry.in_use {
@@ -1087,7 +1126,7 @@ impl SettingsApp {
                             }
                         }
                         DownloadStatus::Downloading { .. } => {
-                            ui.add_enabled(false, egui::Button::new("..."));
+                            ui.add_enabled(false, egui::Button::new("Downloading..."));
                         }
                     }
 
@@ -1194,6 +1233,10 @@ fn spawn_download(info: ModelInfo, registry: Arc<Mutex<ModelRegistry>>) {
             return;
         }
 
+        // Reset to NotDownloaded so the cache scanner picks it up
+        if let Some(entry) = registry.lock().unwrap().get_mut(&info.id) {
+            entry.status = DownloadStatus::NotDownloaded;
+        }
         // Rescan cache so the entry picks up the downloaded path + size
         let cfg = config::load_config();
         let mut reg = registry.lock().unwrap();
@@ -1252,7 +1295,7 @@ fn download_model_files(
     repo: &str,
     registry: &Arc<Mutex<ModelRegistry>>,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
+    use std::io::{Read, Write};
 
     let token = hf_token();
 
@@ -1268,6 +1311,11 @@ fn download_model_files(
     if files.is_empty() {
         anyhow::bail!("No files listed for model '{}'", info.id);
     }
+
+    let total_expected = info.approx_size_bytes;
+    let mut total_downloaded: u64 = 0;
+    let mut last_update_bytes: u64 = 0;
+    const UPDATE_INTERVAL: u64 = 256 * 1024; // update UI every 256 KB
 
     for (i, filename) in files.iter().enumerate() {
         let url = format!(
@@ -1298,14 +1346,28 @@ fn download_model_files(
 
         let mut out = std::fs::File::create(&dest)?;
         let mut reader = resp.into_reader();
-        std::io::copy(&mut reader, &mut out)?;
-        out.flush()?;
+        let mut buf = [0u8; 65536]; // 64 KB read chunks
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(&buf[..n])?;
+            total_downloaded += n as u64;
 
-        // Update progress
-        let pct = ((i + 1) as f32 / files.len() as f32 * 100.0) as u8;
-        if let Some(entry) = registry.lock().unwrap().get_mut(&info.id) {
-            entry.status = DownloadStatus::Downloading { progress_pct: pct };
+            if total_downloaded - last_update_bytes >= UPDATE_INTERVAL {
+                last_update_bytes = total_downloaded;
+                let pct = if total_expected > 0 {
+                    (total_downloaded as f64 / total_expected as f64 * 100.0).min(99.0) as u8
+                } else {
+                    ((i as f64 / files.len() as f64) * 100.0) as u8
+                };
+                if let Some(entry) = registry.lock().unwrap().get_mut(&info.id) {
+                    entry.status = DownloadStatus::Downloading { progress_pct: pct };
+                }
+            }
         }
+        out.flush()?;
     }
 
     Ok(())
@@ -1376,8 +1438,8 @@ fn format_size(bytes: u64) -> String {
 fn abbreviate_path(path: &std::path::Path) -> String {
     let components: Vec<_> = path.components().collect();
     if components.len() <= 2 {
-        return path.display().to_string();
+        return path.display().to_string().replace('\\', "/");
     }
     let tail: PathBuf = components[components.len() - 2..].iter().collect();
-    format!("\u{2026}/{}", tail.display())
+    format!("\u{2026}/{}", tail.display().to_string().replace('\\', "/"))
 }

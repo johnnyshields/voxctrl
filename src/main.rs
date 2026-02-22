@@ -211,9 +211,39 @@ fn run_gui(
 // ── Entry point ────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_secs()
-        .init();
+    // Log to both stderr and a file next to the exe for diagnostics.
+    let log_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("voxctrl.log")));
+    let log_file = log_path.as_ref().and_then(|p| {
+        std::fs::File::create(p).ok()
+    });
+
+    let mut builder = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info"),
+    );
+    builder.format_timestamp_secs();
+    if let Some(file) = log_file {
+        use std::io::Write;
+        let file = std::sync::Mutex::new(file);
+        builder.format(move |buf, record| {
+            let line = format!(
+                "[{} {} {}] {}\n",
+                buf.timestamp_seconds(),
+                record.level(),
+                record.module_path().unwrap_or(""),
+                record.args(),
+            );
+            // Write to both stderr and file
+            let _ = buf.write_all(line.as_bytes());
+            if let Ok(mut f) = file.lock() {
+                let _ = f.write_all(line.as_bytes());
+                let _ = f.flush();
+            }
+            Ok(())
+        });
+    }
+    builder.init();
 
     // Subprocess mode: settings window runs as its own eframe app (separate EventLoop).
     #[cfg(feature = "gui")]
@@ -221,6 +251,15 @@ fn main() -> Result<()> {
         return ui::run_settings_standalone();
     }
 
+    if let Err(e) = run() {
+        log::error!("Fatal: {e:#}");
+        eprintln!("Error: {e:#}");
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn run() -> Result<()> {
     log::info!("─── voxctrl v{} starting ───", env!("CARGO_PKG_VERSION"));
 
     let ui_mode = pick_ui_mode();
@@ -233,10 +272,12 @@ fn main() -> Result<()> {
     // Build model registry and scan cache (respecting config paths / cache_dir)
     let mut registry = models::ModelRegistry::new(models::catalog::all_models());
     registry.scan_cache(&cfg.models);
+    log::info!("Model registry scanned ({} entries)", registry.entries().len());
 
     // Resolve model path from registry (no auto-download; pending state if missing)
     let stt_model_dir = models::catalog::required_model_id(&cfg)
         .and_then(|id| registry.model_path(&id));
+    log::info!("STT model dir: {:?}", stt_model_dir);
 
     // Mark in-use model
     if let Some(model_id) = models::catalog::required_model_id(&cfg) {
@@ -246,11 +287,18 @@ fn main() -> Result<()> {
     #[cfg(feature = "gui")]
     let registry = Arc::new(Mutex::new(registry));
     let state = Arc::new(SharedState::new());
+
+    log::info!("Creating pipeline...");
     let pipeline = Arc::new(pipeline::Pipeline::from_config(&cfg, stt_model_dir)?);
+    log::info!("Pipeline created");
+
+    log::info!("Starting audio capture...");
     let audio_stream = audio::start_capture(state.clone(), &cfg)?;
     log::info!("Audio stream open (always-on)");
 
-    stt_server::start(pipeline.clone(), cfg.stt.stt_server_port)?;
+    log::info!("Starting STT server...");
+    stt_server::start(pipeline.clone())?;
+    log::info!("STT server started");
 
     match ui_mode {
         #[cfg(feature = "gui")]

@@ -1,30 +1,24 @@
-//! STT TCP client — sends WAV data to the main process's STT server.
+//! STT named-pipe client — sends WAV data to the main process's STT server.
 //!
 //! Used by the Settings subprocess to test STT without needing direct
 //! access to the pipeline.
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use interprocess::local_socket::{ConnectOptions, ToNsName};
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
+const PIPE_NAME: &str = "voxctrl-stt";
 
 /// Send WAV data to the STT server and return the transcript.
-pub fn transcribe_via_server(port: u16, wav_data: &[u8]) -> Result<String> {
-    let addr = format!("127.0.0.1:{port}");
-    let mut stream = TcpStream::connect_timeout(
-        &addr.parse().context("invalid address")?,
-        CONNECT_TIMEOUT,
-    )
-    .with_context(|| {
-        format!("Cannot connect to STT server on {addr} — is voxctrl running?")
-    })?;
+pub fn transcribe_via_server(wav_data: &[u8]) -> Result<String> {
+    let name = PIPE_NAME.to_ns_name::<interprocess::local_socket::GenericNamespaced>()
+        .context("Failed to create namespaced pipe name")?;
 
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    let mut stream = ConnectOptions::new()
+        .name(name)
+        .connect_sync()
+        .context("Cannot connect to STT server \u{2014} is voxctrl running?")?;
 
     // Send: [4 bytes: len] [N bytes: WAV]
     let len = wav_data.len() as u32;

@@ -1,0 +1,13 @@
+# ── Faster builds ─────────────────────────────────────────────────────────
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+
+# Debug builds: skip optimizations entirely for fast iteration.
+# Run `cargo build --target x86_64-pc-windows-gnu` (no --release) for dev.
+[profile.dev]
+opt-level = 0
+
+# Release builds: use thin LTO instead of fat LTO for faster linking.
+[profile.release]
+lto = "thin"
