@@ -161,6 +161,7 @@ impl eframe::App for ModelManagerApp {
     }
 }
 
+#[allow(dead_code)]
 enum Action {
     Download(String),
     Delete(String),

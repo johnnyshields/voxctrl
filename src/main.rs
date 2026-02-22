@@ -2,30 +2,34 @@
 //!
 //! Mic → VAD → STT → Router → Action
 //!
-//! Hold Ctrl+Win+Space to toggle recording. Tray icon: green=idle, red=recording, amber=transcribing.
+//! GUI mode: Tray icon + global hotkey (default).
+//! TUI mode: Terminal UI with Space to toggle (`--tui`).
 
 mod action;
 mod audio;
 mod config;
+#[cfg(feature = "gui")]
 mod hotkey;
 mod models;
 mod pipeline;
+mod recording;
 mod router;
 mod stt;
+#[cfg(feature = "gui")]
 mod tray;
-mod vad;
-#[cfg(feature = "ui-model-manager")]
+#[cfg(feature = "tui")]
+mod tui;
+#[cfg(feature = "gui")]
 mod ui;
+mod vad;
 
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use global_hotkey::GlobalHotKeyEvent;
-use muda::MenuEvent;
-use tray_icon::TrayIconEvent;
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+
+// Compile-time check: at least one UI feature must be enabled.
+#[cfg(not(any(feature = "gui", feature = "tui")))]
+compile_error!("At least one of the `gui` or `tui` features must be enabled.");
 
 // ── Shared state ───────────────────────────────────────────────────────────
 
@@ -50,67 +54,140 @@ impl SharedState {
     }
 }
 
-// ── App handler for winit event loop ───────────────────────────────────────
+// ── UI mode selection ─────────────────────────────────────────────────────
 
-struct App {
-    state: Arc<SharedState>,
-    #[allow(dead_code)]
-    tray: Option<tray_icon::TrayIcon>,
-    #[allow(dead_code)]
-    hotkey_manager: Option<global_hotkey::GlobalHotKeyManager>,
-    hotkey_id: Option<u32>,
-    cfg: config::Config,
-    pipeline: Arc<pipeline::Pipeline>,
-    _audio_stream: Option<cpal::Stream>,
-    #[allow(dead_code)]
-    registry: Arc<Mutex<models::ModelRegistry>>,
-    menu_ids: tray::TrayMenuIds,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UiMode {
+    #[cfg(feature = "gui")]
+    Gui,
+    #[cfg(feature = "tui")]
+    Tui,
 }
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+fn pick_ui_mode() -> UiMode {
+    let wants_tui = std::env::args().any(|a| a == "--tui" || a == "-t");
 
-    fn window_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        _event: WindowEvent,
-    ) {
+    #[cfg(all(feature = "gui", feature = "tui"))]
+    {
+        if wants_tui {
+            return UiMode::Tui;
+        }
+        return UiMode::Gui;
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            log::trace!("Tray event: {:?}", event);
+    #[cfg(all(feature = "gui", not(feature = "tui")))]
+    {
+        if wants_tui {
+            log::warn!("--tui requested but `tui` feature not compiled; falling back to GUI");
+        }
+        return UiMode::Gui;
+    }
+
+    #[cfg(all(feature = "tui", not(feature = "gui")))]
+    {
+        let _ = wants_tui;
+        return UiMode::Tui;
+    }
+}
+
+// ── GUI event loop ────────────────────────────────────────────────────────
+
+#[cfg(feature = "gui")]
+fn run_gui(
+    state: Arc<SharedState>,
+    cfg: config::Config,
+    pipeline: Arc<pipeline::Pipeline>,
+    audio_stream: cpal::Stream,
+    registry: Arc<Mutex<models::ModelRegistry>>,
+) -> Result<()> {
+    use global_hotkey::GlobalHotKeyEvent;
+    use muda::MenuEvent;
+    use tray_icon::TrayIconEvent;
+    use winit::application::ApplicationHandler;
+    use winit::event::WindowEvent;
+    use winit::event_loop::{ActiveEventLoop, EventLoop};
+
+    struct App {
+        state: Arc<SharedState>,
+        #[allow(dead_code)]
+        tray: Option<tray_icon::TrayIcon>,
+        #[allow(dead_code)]
+        hotkey_manager: Option<global_hotkey::GlobalHotKeyManager>,
+        hotkey_id: Option<u32>,
+        cfg: config::Config,
+        pipeline: Arc<pipeline::Pipeline>,
+        _audio_stream: Option<cpal::Stream>,
+        #[allow(dead_code)]
+        registry: Arc<Mutex<models::ModelRegistry>>,
+        menu_ids: tray::TrayMenuIds,
+    }
+
+    impl ApplicationHandler for App {
+        fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+        fn window_event(
+            &mut self,
+            _event_loop: &ActiveEventLoop,
+            _window_id: winit::window::WindowId,
+            _event: WindowEvent,
+        ) {
         }
 
-        // Process menu events (Quit, Manage Models...)
-        if let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id == self.menu_ids.quit {
-                log::info!("Quit requested");
-                _event_loop.exit();
-            } else if event.id == self.menu_ids.manage_models {
-                log::info!("Opening model manager...");
-                #[cfg(feature = "ui-model-manager")]
-                {
+        fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+            if let Ok(event) = TrayIconEvent::receiver().try_recv() {
+                log::trace!("Tray event: {:?}", event);
+            }
+
+            // Process menu events (Quit, Manage Models...)
+            if let Ok(event) = MenuEvent::receiver().try_recv() {
+                if event.id == self.menu_ids.quit {
+                    log::info!("Quit requested");
+                    _event_loop.exit();
+                } else if event.id == self.menu_ids.manage_models {
+                    log::info!("Opening model manager...");
                     ui::open_model_manager(self.registry.clone());
                 }
-                #[cfg(not(feature = "ui-model-manager"))]
-                {
-                    log::warn!("Model manager UI not available (compile with --features ui-model-manager)");
-                }
+            }
+
+            if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                hotkey::handle_hotkey_event(
+                    &event,
+                    self.hotkey_id,
+                    &self.state,
+                    &self.cfg,
+                    self.pipeline.clone(),
+                );
             }
         }
-
-        if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            hotkey::handle_hotkey_event(
-                &event,
-                self.hotkey_id,
-                &self.state,
-                &self.cfg,
-                self.pipeline.clone(),
-            );
-        }
     }
+
+    let event_loop = EventLoop::new()?;
+
+    let (tray, menu_ids) = tray::build_tray()?;
+    log::info!("Tray icon created");
+
+    let (hotkey_manager, hotkey_id) = match hotkey::setup_hotkeys(&cfg.hotkey) {
+        Ok(Some((mgr, id))) => (Some(mgr), Some(id)),
+        Ok(None) => (None, None),
+        Err(e) => return Err(e),
+    };
+
+    let mut app = App {
+        state,
+        tray: Some(tray),
+        hotkey_manager,
+        hotkey_id,
+        cfg,
+        pipeline,
+        _audio_stream: Some(audio_stream),
+        registry,
+        menu_ids,
+    };
+
+    log::info!("Ready — green=idle  red=recording  amber=transcribing");
+    event_loop.run_app(&mut app)?;
+
+    Ok(())
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -121,6 +198,9 @@ fn main() -> Result<()> {
         .init();
 
     log::info!("─── voxctrl v{} starting ───", env!("CARGO_PKG_VERSION"));
+
+    let ui_mode = pick_ui_mode();
+    log::info!("UI mode: {:?}", ui_mode);
 
     let cfg = config::load_config();
     log::info!("Config: stt={}, vad={}, router={}, action={}",
@@ -133,7 +213,6 @@ fn main() -> Result<()> {
     // Consent check — ensure required model is available
     if let Err(e) = models::consent::ensure_model_available(&cfg, &mut registry) {
         log::error!("Model not available: {e}");
-        // Continue anyway — user declined download, backend may still work (e.g. HTTP backends)
     }
 
     // Mark in-use model
@@ -141,39 +220,19 @@ fn main() -> Result<()> {
         registry.set_in_use(&model_id);
     }
 
+    #[cfg(feature = "gui")]
     let registry = Arc::new(Mutex::new(registry));
-
     let state = Arc::new(SharedState::new());
-
-    // Build the pluggable pipeline
     let pipeline = Arc::new(pipeline::Pipeline::from_config(&cfg)?);
-
-    // Event loop (must be on main thread for macOS)
-    let event_loop = EventLoop::new()?;
-
-    let (tray, menu_ids) = tray::build_tray()?;
-    log::info!("Tray icon created");
-
-    let (hotkey_manager, hotkey_id) = hotkey::setup_hotkeys()?;
-    log::info!("Global hotkey registered");
-
     let audio_stream = audio::start_capture(state.clone(), &cfg)?;
     log::info!("Audio stream open (always-on)");
 
-    let mut app = App {
-        state,
-        tray: Some(tray),
-        hotkey_manager: Some(hotkey_manager),
-        hotkey_id: Some(hotkey_id),
-        cfg,
-        pipeline,
-        _audio_stream: Some(audio_stream),
-        registry,
-        menu_ids,
-    };
-
-    log::info!("Ready — green=idle  red=recording  amber=transcribing");
-    event_loop.run_app(&mut app)?;
+    match ui_mode {
+        #[cfg(feature = "gui")]
+        UiMode::Gui => run_gui(state, cfg, pipeline, audio_stream, registry)?,
+        #[cfg(feature = "tui")]
+        UiMode::Tui => tui::run_tui(state, cfg, pipeline, audio_stream)?,
+    }
 
     log::info!("─── voxctrl stopped ───");
     Ok(())

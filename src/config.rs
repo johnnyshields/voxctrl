@@ -87,6 +87,20 @@ impl Default for ActionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotkeyConfig {
+    #[serde(default = "default_hotkey_shortcut")]
+    pub shortcut: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            shortcut: default_hotkey_shortcut(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioConfig {
     #[serde(default = "default_device_pattern")]
     pub device_pattern: String,
@@ -120,6 +134,8 @@ pub struct Config {
     pub action: ActionConfig,
     #[serde(default)]
     pub audio: AudioConfig,
+    #[serde(default)]
+    pub hotkey: HotkeyConfig,
 }
 
 impl Default for Config {
@@ -130,6 +146,7 @@ impl Default for Config {
             router: RouterConfig::default(),
             action: ActionConfig::default(),
             audio: AudioConfig::default(),
+            hotkey: HotkeyConfig::default(),
         }
     }
 }
@@ -146,6 +163,7 @@ fn default_energy_threshold() -> f64 { 0.015 }
 fn default_silero_threshold() -> f32 { 0.5 }
 fn default_router_backend() -> String { "passthrough".into() }
 fn default_action_backend() -> String { "type-text".into() }
+fn default_hotkey_shortcut() -> String { "Ctrl+Super+Space".into() }
 fn default_device_pattern() -> String { "DJI".into() }
 fn default_sample_rate() -> u32 { 16000 }
 fn default_chunk_duration_ms() -> u32 { 100 }
@@ -181,6 +199,7 @@ pub fn load_config() -> Config {
         if raw.get("stt").is_some()
             || raw.get("vad").is_some()
             || raw.get("audio").is_some()
+            || raw.get("hotkey").is_some()
         {
             return cfg;
         }
@@ -249,6 +268,7 @@ fn load_legacy_config(contents: &str) -> Config {
                 .map(|d| (d * 1000.0) as u32)
                 .unwrap_or(default_chunk_duration_ms()),
         },
+        hotkey: HotkeyConfig::default(),
     }
 }
 

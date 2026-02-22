@@ -5,7 +5,7 @@ edition = "2021"
 description = "Pluggable voice-to-action pipeline — mic → VAD → STT → router → action"
 
 [features]
-default = ["stt-voxtral-http", "vad-energy"]
+default = ["stt-voxtral-http", "vad-energy", "gui", "tui"]
 
 # STT backends
 stt-voxtral-http   = ["dep:ureq"]
@@ -28,7 +28,10 @@ cuda = []
 
 # Model manager UI + consent dialog
 consent-dialog = ["dep:rfd"]
-ui-model-manager = ["dep:eframe", "dep:egui"]
+
+# UI modes
+gui = ["dep:tray-icon", "dep:global-hotkey", "dep:winit", "dep:muda", "dep:eframe", "dep:egui"]
+tui = ["dep:ratatui", "dep:crossterm"]
 
 [dependencies]
 # Core (always included)
@@ -40,11 +43,19 @@ serde_json = "1"
 tempfile   = "3"
 hound      = "3.5"
 
-# Tray + menu + hotkey (Tauri ecosystem)
-tray-icon     = "0.19"
-global-hotkey = "0.6"
-winit         = "0.30"
-muda          = "0.15"
+# GUI: Tray + menu + hotkey (Tauri ecosystem)
+tray-icon     = { version = "0.19", optional = true }
+global-hotkey = { version = "0.6", optional = true }
+winit         = { version = "0.30", optional = true }
+muda          = { version = "0.15", optional = true }
+
+# GUI: Model manager
+eframe = { version = "0.30", default-features = false, features = ["default_fonts", "glow"], optional = true }
+egui   = { version = "0.30", optional = true }
+
+# TUI
+ratatui   = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
 
 # Audio capture
 cpal = "0.15"
@@ -74,7 +85,3 @@ ort = { version = "2.0.0-rc.9", optional = true }
 # Model management
 dirs = "5"
 rfd = { version = "0.15", optional = true }
-
-# UI — Model manager (optional)
-eframe = { version = "0.30", optional = true, default-features = false, features = ["default_fonts", "glow"] }
-egui   = { version = "0.30", optional = true }
