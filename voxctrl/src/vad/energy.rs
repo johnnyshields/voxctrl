@@ -58,8 +58,10 @@ mod tests {
     #[test]
     fn threshold_boundary() {
         // RMS of a constant signal of amplitude A is A itself.
-        // With threshold 0.1, a signal at 0.1 should NOT trigger (strictly greater).
-        let mut vad = EnergyVad::new(0.1);
+        // Note: 0.1f32 as f64 > 0.1f64 due to f32 precision, so use the
+        // f32-cast value as threshold to get an exact boundary test.
+        let threshold = 0.1f32 as f64;
+        let mut vad = EnergyVad::new(threshold);
         let at_threshold = vec![0.1f32; 1600];
         assert!(!vad.is_speech(&at_threshold, 16000));
 
