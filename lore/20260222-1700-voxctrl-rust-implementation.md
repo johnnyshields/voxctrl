@@ -1,23 +1,23 @@
-# 2026-02-22 — voxmic Rust Implementation Summary
+# 2026-02-22 — voxctrl Rust Implementation Summary
 
 ## What was built
 
-Rewrote the Python `tray_app.py` dictation app as a Rust binary in `voxmic/`.
+Rewrote the Python `tray_app.py` dictation app as a Rust binary in `voxctrl/`.
 9 files, ~500 lines of Rust, zero C/C++ build dependencies.
 
 ## Files created
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `voxmic/Cargo.toml` | Manifest with all dependencies | 30 |
-| `voxmic/src/main.rs` | Entry point, winit event loop, shared types | 143 |
-| `voxmic/src/config.rs` | Config struct + serde load/save from config.json | 125 |
-| `voxmic/src/backend/mod.rs` | `TranscriptionBackend` trait | 11 |
-| `voxmic/src/backend/voxtral.rs` | Voxtral HTTP multipart POST via ureq | 78 |
-| `voxmic/src/audio.rs` | cpal always-open audio stream | 92 |
-| `voxmic/src/typing.rs` | enigo text injection | 17 |
-| `voxmic/src/hotkey.rs` | global-hotkey Ctrl+Super+Space toggle | 117 |
-| `voxmic/src/tray.rs` | tray-icon + muda menu + generated circle icons | 64 |
+| `voxctrl/Cargo.toml` | Manifest with all dependencies | 30 |
+| `voxctrl/src/main.rs` | Entry point, winit event loop, shared types | 143 |
+| `voxctrl/src/config.rs` | Config struct + serde load/save from config.json | 125 |
+| `voxctrl/src/backend/mod.rs` | `TranscriptionBackend` trait | 11 |
+| `voxctrl/src/backend/voxtral.rs` | Voxtral HTTP multipart POST via ureq | 78 |
+| `voxctrl/src/audio.rs` | cpal always-open audio stream | 92 |
+| `voxctrl/src/typing.rs` | enigo text injection | 17 |
+| `voxctrl/src/hotkey.rs` | global-hotkey Ctrl+Super+Space toggle | 117 |
+| `voxctrl/src/tray.rs` | tray-icon + muda menu + generated circle icons | 64 |
 
 ## Key decisions made during implementation
 

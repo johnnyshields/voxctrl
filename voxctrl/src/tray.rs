@@ -38,7 +38,7 @@ pub fn make_icon(status: AppStatus) -> Icon {
 /// Build the system tray icon with menu.
 pub fn build_tray() -> Result<TrayIcon> {
     let menu = Menu::new();
-    let _label = MenuItem::new("voxmic Dictation", false, None);
+    let _label = MenuItem::new("voxctrl Dictation", false, None);
     let _quit = MenuItem::new("Quit", true, None);
     menu.append(&_label).context("menu append label")?;
     menu.append(&PredefinedMenuItem::separator()).context("menu append separator")?;
@@ -47,7 +47,7 @@ pub fn build_tray() -> Result<TrayIcon> {
     let icon = make_icon(AppStatus::Idle);
     let tray = TrayIconBuilder::new()
         .with_icon(icon)
-        .with_tooltip("voxmic Dictation")
+        .with_tooltip("voxctrl Dictation")
         .with_menu(Box::new(menu))
         .build()
         .context("build tray icon")?;

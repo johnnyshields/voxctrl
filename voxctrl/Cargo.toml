@@ -1,5 +1,5 @@
 [package]
-name = "voxmic"
+name = "voxctrl"
 version = "0.1.0"
 edition = "2021"
 description = "Cross-platform tray dictation app — hold Ctrl+Win to record, transcribe via Voxtral"

@@ -1,4 +1,4 @@
-//! voxmic — Cross-platform tray dictation app
+//! voxctrl — Cross-platform tray dictation app
 //!
 //! Hold Ctrl+Win to record, release to transcribe via Voxtral, type at cursor.
 //! Tray icon: green = idle, red = recording, amber = transcribing.
@@ -96,7 +96,7 @@ fn main() -> Result<()> {
         .format_timestamp_secs()
         .init();
 
-    log::info!("─── voxmic starting ───");
+    log::info!("─── voxctrl starting ───");
 
     // Load config
     let cfg = config::load_config();
@@ -138,6 +138,6 @@ fn main() -> Result<()> {
     log::info!("Tray icon running — green=idle  red=recording  amber=transcribing");
     event_loop.run_app(&mut app)?;
 
-    log::info!("─── voxmic stopped ───");
+    log::info!("─── voxctrl stopped ───");
     Ok(())
 }

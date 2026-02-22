@@ -27,7 +27,7 @@ impl TranscriptionBackend for VoxtralBackend {
         let wav_bytes =
             std::fs::read(wav_path).with_context(|| format!("reading WAV: {:?}", wav_path))?;
 
-        let boundary = "----VoxmicBoundary";
+        let boundary = "----VoxctrlBoundary";
         let mut body: Vec<u8> = Vec::new();
 
         // Part: file
