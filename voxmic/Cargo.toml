@@ -34,3 +34,7 @@ tempfile = "3"
 
 # Error handling
 anyhow = "1"
+
+[package.metadata.wix]
+upgrade-guid = "EB4044A7-9711-4616-B3E0-8B8381C73C7B"
+path-guid = "4E78E5B7-78B4-4C95-93B1-87B3655662BB"
