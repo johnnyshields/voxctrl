@@ -272,7 +272,6 @@ fn load_legacy_config(contents: &str) -> Config {
     }
 }
 
-#[allow(dead_code)]
 pub fn save_config(cfg: &Config) {
     let path = config_path();
     match serde_json::to_string_pretty(cfg) {

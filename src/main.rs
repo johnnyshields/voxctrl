@@ -143,9 +143,9 @@ fn run_gui(
                 if event.id == self.menu_ids.quit {
                     log::info!("Quit requested");
                     _event_loop.exit();
-                } else if event.id == self.menu_ids.manage_models {
-                    log::info!("Opening model manager...");
-                    ui::open_model_manager(self.registry.clone());
+                } else if event.id == self.menu_ids.settings {
+                    log::info!("Opening settings...");
+                    ui::open_settings(self.registry.clone());
                 }
             }
 
@@ -197,10 +197,10 @@ fn main() -> Result<()> {
         .format_timestamp_secs()
         .init();
 
-    // Subprocess mode: model manager runs as its own eframe app (separate EventLoop).
+    // Subprocess mode: settings window runs as its own eframe app (separate EventLoop).
     #[cfg(feature = "gui")]
-    if std::env::args().any(|a| a == "--manage-models") {
-        return ui::run_model_manager_standalone();
+    if std::env::args().any(|a| a == "--settings") {
+        return ui::run_settings_standalone();
     }
 
     log::info!("─── voxctrl v{} starting ───", env!("CARGO_PKG_VERSION"));
