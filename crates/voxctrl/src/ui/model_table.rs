@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
-use voxctrl_core::config;
+use voxctrl_core::config::{self, GpuBackend};
 use voxctrl_core::models::{DownloadStatus, ModelCategory, ModelRegistry};
 use voxctrl_core::models::catalog::ModelInfo;
 
@@ -30,13 +30,13 @@ const VAD_BACKENDS: &[(&str, &str)] = &[
     ("silero", "Silero VAD v5"),
 ];
 
-const GPU_BACKENDS: &[(&str, &str)] = &[
-    ("auto", "Auto-detect"),
-    ("cuda", "CUDA (NVIDIA)"),
-    ("zluda", "ZLUDA (AMD)"),
-    ("directml", "DirectML"),
-    ("wgpu", "WebGPU"),
-    ("cpu", "CPU only"),
+const GPU_BACKENDS: &[(GpuBackend, &str)] = &[
+    (GpuBackend::Auto, "Auto-detect"),
+    (GpuBackend::Cuda, "CUDA (NVIDIA)"),
+    (GpuBackend::Zluda, "ZLUDA (AMD)"),
+    (GpuBackend::DirectMl, "DirectML"),
+    (GpuBackend::Wgpu, "WebGPU"),
+    (GpuBackend::Cpu, "CPU only"),
 ];
 
 fn lookup_label(options: &'static [(&str, &str)], value: &str) -> &'static str {
@@ -255,7 +255,7 @@ pub struct SettingsApp {
     stt_backend: String,
     whisper_model: String,
     vad_backend: String,
-    gpu_backend: String,
+    gpu_backend: GpuBackend,
     gpu_detected: String,
     gpu_mode: String,
     #[cfg(feature = "zluda")]
@@ -340,7 +340,7 @@ pub fn run_settings_standalone() -> anyhow::Result<()> {
         stt_backend: cfg.stt.backend.clone(),
         whisper_model: cfg.stt.whisper_model.clone(),
         vad_backend: cfg.vad.backend.clone(),
-        gpu_backend: cfg.gpu.backend.clone(),
+        gpu_backend: cfg.gpu.backend,
         gpu_detected: {
             let gpus = voxctrl_core::gpu::detect_gpus();
             if gpus.is_empty() {
@@ -729,13 +729,20 @@ impl SettingsApp {
 
                 // ── GPU backend ──────────────────────────────────────
                 ui.label("GPU Backend");
-                egui::ComboBox::from_id_salt("gpu_backend")
-                    .selected_text(lookup_label(GPU_BACKENDS, &self.gpu_backend))
-                    .show_ui(ui, |ui| {
-                        for &(value, label) in GPU_BACKENDS {
-                            ui.selectable_value(&mut self.gpu_backend, value.into(), label);
-                        }
-                    });
+                {
+                    let selected_label = GPU_BACKENDS
+                        .iter()
+                        .find(|(v, _)| *v == self.gpu_backend)
+                        .map(|(_, label)| *label)
+                        .unwrap_or("Unknown");
+                    egui::ComboBox::from_id_salt("gpu_backend")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            for &(value, label) in GPU_BACKENDS {
+                                ui.selectable_value(&mut self.gpu_backend, value, label);
+                            }
+                        });
+                }
                 ui.end_row();
 
                 ui.label("Detected GPU");
@@ -889,7 +896,7 @@ impl SettingsApp {
         cfg.stt.backend = self.stt_backend.clone();
         cfg.stt.whisper_model = self.whisper_model.clone();
         cfg.vad.backend = self.vad_backend.clone();
-        cfg.gpu.backend = self.gpu_backend.clone();
+        cfg.gpu.backend = self.gpu_backend;
         cfg.models.models_directory = self.models_directory.clone();
         cfg.models.model_paths = self.model_paths.clone();
         config::save_config(&cfg);
