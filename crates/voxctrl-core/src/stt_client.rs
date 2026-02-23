@@ -8,11 +8,9 @@ use std::io::{Read, Write};
 use anyhow::{bail, Context, Result};
 use interprocess::local_socket::{ConnectOptions, ToNsName};
 
-const PIPE_NAME: &str = "voxctrl-stt";
-
 /// Send WAV data to the STT server and return the transcript.
 pub fn transcribe_via_server(wav_data: &[u8]) -> Result<String> {
-    let name = PIPE_NAME.to_ns_name::<interprocess::local_socket::GenericNamespaced>()
+    let name = crate::PIPE_NAME.to_ns_name::<interprocess::local_socket::GenericNamespaced>()
         .context("Failed to create namespaced pipe name")?;
 
     let mut stream = ConnectOptions::new()

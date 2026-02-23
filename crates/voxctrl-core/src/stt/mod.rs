@@ -105,3 +105,51 @@ pub fn create_transcriber(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn pending_transcriber_is_not_available() {
+        let pt = PendingTranscriber::new("test-backend".into(), "not installed".into());
+        assert!(!pt.is_available());
+        assert_eq!(pt.name(), "pending");
+    }
+
+    #[test]
+    fn pending_transcriber_returns_error_with_reason() {
+        let pt = PendingTranscriber::new("whisper-cpp".into(), "feature not compiled".into());
+        let result = pt.transcribe(Path::new("/tmp/test.wav"));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("whisper-cpp"), "error should name the backend: {msg}");
+        assert!(msg.contains("feature not compiled"), "error should include reason: {msg}");
+    }
+
+    #[test]
+    fn create_transcriber_falls_back_to_pending_on_unknown_backend() {
+        let cfg = crate::config::SttConfig {
+            backend: "nonexistent-backend".into(),
+            ..Default::default()
+        };
+        let t = create_transcriber(&cfg, None, None).expect("should not fail fatally");
+        assert_eq!(t.name(), "pending");
+        assert!(!t.is_available());
+    }
+
+    #[test]
+    fn create_transcriber_falls_back_when_factory_returns_error() {
+        let cfg = crate::config::SttConfig {
+            backend: "broken-backend".into(),
+            ..Default::default()
+        };
+        let factory: Box<SttFactory> = Box::new(|_cfg, _dir| {
+            Some(Err(anyhow::anyhow!("init failed")))
+        });
+        let t = create_transcriber(&cfg, None, Some(&*factory)).expect("should not fail fatally");
+        assert_eq!(t.name(), "pending");
+        assert!(!t.is_available());
+    }
+}

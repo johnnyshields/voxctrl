@@ -18,6 +18,11 @@ pub mod vad;
 
 use std::sync::Mutex;
 
+// ── IPC ──────────────────────────────────────────────────────────────────────
+
+/// Named-pipe name shared between STT client and server.
+pub const PIPE_NAME: &str = "voxctrl-stt";
+
 // ── Shared state ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,5 +43,11 @@ impl SharedState {
             status: Mutex::new(AppStatus::Idle),
             chunks: Mutex::new(Vec::new()),
         }
+    }
+}
+
+impl Default for SharedState {
+    fn default() -> Self {
+        Self::new()
     }
 }

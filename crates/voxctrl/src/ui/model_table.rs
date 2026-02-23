@@ -595,24 +595,11 @@ impl SettingsApp {
     }
 
     fn required_stt_model_id(&self) -> Option<String> {
-        match self.stt_backend.as_str() {
-            "whisper-native" | "whisper-cpp" => match self.whisper_model.as_str() {
-                "tiny" => Some("openai/whisper-tiny".into()),
-                "small" => Some("openai/whisper-small".into()),
-                "medium" => Some("openai/whisper-medium".into()),
-                "large-v3" | "large" => Some("openai/whisper-large-v3".into()),
-                _ => None,
-            },
-            "voxtral-native" => Some("mistral/voxtral-mini".into()),
-            _ => None,
-        }
+        voxctrl_core::models::catalog::required_stt_model_id(&self.stt_backend, &self.whisper_model)
     }
 
     fn required_vad_model_id(&self) -> Option<String> {
-        match self.vad_backend.as_str() {
-            "silero" => Some("silero/vad-v5".into()),
-            _ => None,
-        }
+        voxctrl_core::models::catalog::required_vad_model_id(&self.vad_backend)
     }
 
     fn is_model_downloaded(&self, model_id: &str) -> bool {

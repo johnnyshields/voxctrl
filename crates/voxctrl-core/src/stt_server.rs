@@ -15,11 +15,9 @@ use crate::pipeline::Pipeline;
 
 const MAX_PAYLOAD: u32 = 100_000_000; // 100 MB
 
-const PIPE_NAME: &str = "voxctrl-stt";
-
 /// Start the STT named-pipe server on a background thread.
 pub fn start(pipeline: Arc<Pipeline>) -> Result<()> {
-    let name = PIPE_NAME.to_ns_name::<interprocess::local_socket::GenericNamespaced>()
+    let name = crate::PIPE_NAME.to_ns_name::<interprocess::local_socket::GenericNamespaced>()
         .context("Failed to create namespaced pipe name")?;
 
     let listener = ListenerOptions::new()
@@ -27,7 +25,7 @@ pub fn start(pipeline: Arc<Pipeline>) -> Result<()> {
         .create_sync()
         .context("Failed to create STT named-pipe listener")?;
 
-    log::info!("STT server listening on named pipe: {PIPE_NAME}");
+    log::info!("STT server listening on named pipe: {}", crate::PIPE_NAME);
 
     std::thread::Builder::new()
         .name("stt-server".into())

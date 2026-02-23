@@ -46,3 +46,37 @@ pub fn stt_factory(
         _ => None, // Unknown — let core handle it
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voxctrl_core::config::SttConfig;
+
+    fn make_cfg(backend: &str) -> SttConfig {
+        SttConfig {
+            backend: backend.into(),
+            whisper_model: "tiny".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unknown_backend_returns_none() {
+        assert!(stt_factory(&make_cfg("unknown-backend"), None).is_none());
+    }
+
+    #[test]
+    fn voxtral_http_returns_none() {
+        // voxtral-http is handled by core, not stt crate
+        assert!(stt_factory(&make_cfg("voxtral-http"), None).is_none());
+    }
+
+    #[test]
+    fn known_backends_return_some() {
+        // These return Some regardless of feature flags (Ok if compiled, Err if not)
+        for backend in &["whisper-cpp", "whisper-native", "voxtral-native"] {
+            let result = stt_factory(&make_cfg(backend), None);
+            assert!(result.is_some(), "stt_factory should handle '{backend}'");
+        }
+    }
+}
