@@ -272,7 +272,6 @@ struct TestHotkeyState {
 
 struct SttTiming {
     total_secs: f64,
-    wav_encode_secs: f64,
     transcribe_secs: f64,
     method: String, // "server" or "direct"
 }
@@ -320,21 +319,14 @@ struct TestState {
     recording: Arc<std::sync::atomic::AtomicBool>,
 
     // Latency tracking
-    mic_start_time: Option<std::time::Instant>,
     mic_ready_latency: Option<f64>,
     recording_start_time: Option<std::time::Instant>,
     recording_duration: Option<f64>,
-    stt_start_time: Option<std::time::Instant>,
     stt_latency: Option<f64>,
-    stt_wav_encode_latency: Option<f64>,
     stt_transcribe_latency: Option<f64>,
     stt_method: Option<String>,
     stt_timing_slot: Option<Arc<std::sync::Mutex<Option<SttTiming>>>>,
-    #[allow(dead_code)]
-    cu_start_time: Option<std::time::Instant>,
-    #[allow(dead_code)]
     cu_latency: Option<f64>,
-    #[allow(dead_code)]
     cu_timing_slot: Option<Arc<std::sync::Mutex<Option<f64>>>>,
 }
 
@@ -363,17 +355,13 @@ impl Default for TestState {
             cu_done_rx: None,
             test_chunks: Arc::new(std::sync::Mutex::new(Vec::new())),
             recording: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            mic_start_time: None,
             mic_ready_latency: None,
             recording_start_time: None,
             recording_duration: None,
-            stt_start_time: None,
             stt_latency: None,
-            stt_wav_encode_latency: None,
             stt_transcribe_latency: None,
             stt_method: None,
             stt_timing_slot: None,
-            cu_start_time: None,
             cu_latency: None,
             cu_timing_slot: None,
         }
@@ -1023,7 +1011,6 @@ impl SettingsApp {
             .and_then(|slot| slot.lock().unwrap().take());
         if let Some(timing) = stt_timing_done {
             self.test.stt_latency = Some(timing.total_secs);
-            self.test.stt_wav_encode_latency = Some(timing.wav_encode_secs);
             self.test.stt_transcribe_latency = Some(timing.transcribe_secs);
             self.test.stt_method = Some(timing.method);
         }
@@ -1274,12 +1261,6 @@ impl SettingsApp {
                         ui.colored_label(color, format!("Recording: {dur:.1}s"));
                         ui.colored_label(egui::Color32::DARK_GRAY, "|");
                     }
-                    if let Some(wav) = self.test.stt_wav_encode_latency {
-                        if wav > 0.0 {
-                            ui.colored_label(color, format!("WAV encode: {:.0}ms", wav * 1000.0));
-                            ui.colored_label(egui::Color32::DARK_GRAY, "|");
-                        }
-                    }
                     if let Some(tr) = self.test.stt_transcribe_latency {
                         let method = self.test.stt_method.as_deref().unwrap_or("?");
                         ui.colored_label(color, format!("Transcribe ({method}): {tr:.1}s"));
@@ -1410,13 +1391,6 @@ impl SettingsApp {
                             ui.end_row();
                             total_secs += v;
                         }
-                        if let Some(v) = self.test.stt_wav_encode_latency {
-                            if v > 0.0 {
-                                ui.label("WAV encode:");
-                                ui.label(format!("{:.0}ms", v * 1000.0));
-                                ui.end_row();
-                            }
-                        }
                         if let Some(v) = self.test.stt_transcribe_latency {
                             let method = self.test.stt_method.as_deref().unwrap_or("?");
                             ui.label(format!("STT ({method}):"));
@@ -1447,7 +1421,6 @@ impl SettingsApp {
 
     fn start_mic_test(&mut self, cfg: &config::Config) {
         let mic_start = std::time::Instant::now();
-        self.test.mic_start_time = Some(mic_start);
         let (tx, rx) = std::sync::mpsc::channel();
         match voxctrl_core::audio::start_test_capture(
             &cfg.audio.device_pattern,
@@ -1495,8 +1468,6 @@ impl SettingsApp {
             return;
         }
 
-        self.test.stt_start_time = Some(std::time::Instant::now());
-
         let sample_rate = self.test.mic_sample_rate;
         let stt_cfg = cfg.stt.clone();
 
@@ -1537,7 +1508,6 @@ impl SettingsApp {
 
         self.test.stt_status = format!("Transcribing {}...", path.file_name().unwrap_or_default().to_string_lossy());
         self.test.stt_result.clear();
-        self.test.stt_start_time = Some(std::time::Instant::now());
 
         // Read WAV with hound to extract f32 PCM samples + sample rate.
         let reader = match hound::WavReader::open(&path) {
@@ -1577,16 +1547,9 @@ impl SettingsApp {
         self.test.stt_timing_slot = Some(timing_slot);
 
         std::thread::spawn(move || {
-            let total_start = std::time::Instant::now();
-            match transcribe_pcm_via_server_or_direct(&samples, sample_rate, &stt_cfg) {
-                Ok((text, method)) => {
-                    let total_secs = total_start.elapsed().as_secs_f64();
-                    *timing_writer.lock().unwrap() = Some(SttTiming {
-                        total_secs,
-                        wav_encode_secs: 0.0,
-                        transcribe_secs: total_secs,
-                        method,
-                    });
+            match transcribe_chunks(&samples, sample_rate, &stt_cfg) {
+                Ok((text, timing)) => {
+                    *timing_writer.lock().unwrap() = Some(timing);
                     *result_writer.lock().unwrap() = Some(text);
                     *status_writer.lock().unwrap() = Some("Done".into());
                 }
@@ -1606,7 +1569,6 @@ impl SettingsApp {
         let goal = self.test.cu_goal.clone();
         let use_mock = self.test.cu_use_mock;
 
-        self.test.cu_start_time = Some(std::time::Instant::now());
         self.test.cu_log.clear();
         self.test.cu_running = true;
         self.test.cu_summary.clear();
@@ -1793,7 +1755,7 @@ fn transcribe_chunks(
     let transcribe_secs = transcribe_start.elapsed().as_secs_f64();
     let total_secs = total_start.elapsed().as_secs_f64();
 
-    Ok((text, SttTiming { total_secs, wav_encode_secs: 0.0, transcribe_secs, method }))
+    Ok((text, SttTiming { total_secs, transcribe_secs, method }))
 }
 
 /// Try the named-pipe STT server first; fall back to a local transcriber.
