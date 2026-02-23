@@ -149,6 +149,99 @@ fn build_shortcut_string(
     Some(parts.join("+"))
 }
 
+/// Toggle "Super" in a shortcut string when the include-super checkbox changes.
+fn toggle_super_in_shortcut(include_super: bool, shortcut: &mut String) {
+    if include_super {
+        // Insert Super before the final (key) token
+        let parts: Vec<&str> = shortcut.split('+').collect();
+        let mut new_parts = Vec::with_capacity(parts.len() + 1);
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                new_parts.push("Super");
+            }
+            new_parts.push(part);
+        }
+        *shortcut = new_parts.join("+");
+    } else {
+        // Remove Super/Win/Meta/Cmd tokens
+        *shortcut = shortcut
+            .split('+')
+            .filter(|t| {
+                !matches!(
+                    t.trim().to_lowercase().as_str(),
+                    "super" | "win" | "meta" | "cmd"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("+");
+    }
+}
+
+/// Draw a hotkey capture widget within a 2-column grid (produces 2 rows).
+fn draw_hotkey_capture(
+    ui: &mut egui::Ui,
+    capture_state: &mut CaptureState,
+    capture_target: &mut CaptureTarget,
+    target: CaptureTarget,
+    shortcut: &mut String,
+    include_super: &mut bool,
+    label: &str,
+) {
+    ui.label(label);
+    ui.horizontal(|ui| {
+        if *capture_state == CaptureState::Listening && *capture_target == target {
+            let mods = ui.ctx().input(|i| i.modifiers);
+            let mut parts: Vec<&str> = Vec::new();
+            if mods.ctrl || mods.command {
+                parts.push("Ctrl");
+            }
+            if mods.alt {
+                parts.push("Alt");
+            }
+            if mods.shift {
+                parts.push("Shift");
+            }
+            if *include_super {
+                parts.push("Super");
+            }
+            let text = if parts.is_empty() {
+                "Press keys...".to_string()
+            } else {
+                format!("{}+...", parts.join("+"))
+            };
+            ui.add(egui::Button::new(
+                egui::RichText::new(text).color(egui::Color32::YELLOW),
+            ));
+            if ui.button("Cancel").clicked() {
+                *capture_state = CaptureState::Idle;
+            }
+        } else {
+            let display = if shortcut.is_empty() {
+                "Click to set hotkey..."
+            } else {
+                shortcut.as_str()
+            };
+            let enabled = *capture_state == CaptureState::Idle;
+            if ui.add_enabled(enabled, egui::Button::new(display)).clicked() {
+                *capture_state = CaptureState::Listening;
+                *capture_target = target;
+            }
+            if !shortcut.is_empty() && ui.small_button("\u{2715}").clicked() {
+                shortcut.clear();
+            }
+        }
+    });
+    ui.end_row();
+
+    ui.label("");
+    let old_super = *include_super;
+    ui.checkbox(include_super, "Include Super/Win key");
+    if *include_super != old_super && !shortcut.is_empty() {
+        toggle_super_in_shortcut(*include_super, shortcut);
+    }
+    ui.end_row();
+}
+
 // ── App state ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -609,104 +702,27 @@ impl SettingsApp {
             ui.group(|ui| {
                 ui.strong("Hotkeys");
                 egui::Grid::new("settings_hotkeys").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                    ui.label("Dictation");
-                    ui.horizontal(|ui| {
-                        if self.capture_state == CaptureState::Listening && self.capture_target == CaptureTarget::Dictation {
-                            let mods = ui.ctx().input(|i| i.modifiers);
-                            let mut parts: Vec<&str> = Vec::new();
-                            if mods.ctrl || mods.command {
-                                parts.push("Ctrl");
-                            }
-                            if mods.alt {
-                                parts.push("Alt");
-                            }
-                            if mods.shift {
-                                parts.push("Shift");
-                            }
-                            if self.hotkey_include_super {
-                                parts.push("Super");
-                            }
-                            let text = if parts.is_empty() {
-                                "Press keys...".to_string()
-                            } else {
-                                format!("{}+...", parts.join("+"))
-                            };
-                            ui.add(egui::Button::new(
-                                egui::RichText::new(text).color(egui::Color32::YELLOW),
-                            ));
-                            if ui.button("Cancel").clicked() {
-                                self.capture_state = CaptureState::Idle;
-                            }
-                        } else {
-                            let label = if self.hotkey_dict_shortcut.is_empty() {
-                                "Click to set hotkey..."
-                            } else {
-                                &self.hotkey_dict_shortcut
-                            };
-                            let enabled = self.capture_state == CaptureState::Idle;
-                            if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-                                self.capture_state = CaptureState::Listening;
-                                self.capture_target = CaptureTarget::Dictation;
-                            }
-                            if !self.hotkey_dict_shortcut.is_empty() && ui.small_button("\u{2715}").clicked()
-                            {
-                                self.hotkey_dict_shortcut.clear();
-                            }
-                        }
-                    });
-                    ui.end_row();
-
-                    ui.label("");
-                    let old_super = self.hotkey_include_super;
-                    ui.checkbox(&mut self.hotkey_include_super, "Include Super/Win key");
-                    if self.hotkey_include_super != old_super && !self.hotkey_dict_shortcut.is_empty() {
-                        self.toggle_super_in_shortcut();
-                    }
-                    ui.end_row();
+                    draw_hotkey_capture(
+                        ui,
+                        &mut self.capture_state,
+                        &mut self.capture_target,
+                        CaptureTarget::Dictation,
+                        &mut self.hotkey_dict_shortcut,
+                        &mut self.hotkey_include_super,
+                        "Dictation",
+                    );
 
                     #[cfg(any(feature = "cu-windows", feature = "cu-macos", feature = "cu-linux"))]
                     {
-                        ui.label("CU Hotkey");
-                        ui.horizontal(|ui| {
-                            if self.capture_state == CaptureState::Listening && self.capture_target == CaptureTarget::ComputerUse {
-                                let mods = ui.ctx().input(|i| i.modifiers);
-                                let mut parts: Vec<&str> = Vec::new();
-                                if mods.ctrl || mods.command { parts.push("Ctrl"); }
-                                if mods.alt { parts.push("Alt"); }
-                                if mods.shift { parts.push("Shift"); }
-                                if self.hotkey_cu_include_super { parts.push("Super"); }
-                                let text = if parts.is_empty() {
-                                    "Press keys...".to_string()
-                                } else {
-                                    format!("{}+...", parts.join("+"))
-                                };
-                                ui.add(egui::Button::new(
-                                    egui::RichText::new(text).color(egui::Color32::YELLOW),
-                                ));
-                                if ui.button("Cancel").clicked() {
-                                    self.capture_state = CaptureState::Idle;
-                                }
-                            } else {
-                                let label = if self.hotkey_cu_shortcut.is_empty() {
-                                    "Click to set CU hotkey..."
-                                } else {
-                                    &self.hotkey_cu_shortcut
-                                };
-                                let enabled = self.capture_state == CaptureState::Idle;
-                                if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-                                    self.capture_state = CaptureState::Listening;
-                                    self.capture_target = CaptureTarget::ComputerUse;
-                                }
-                                if !self.hotkey_cu_shortcut.is_empty() && ui.small_button("\u{2715}").clicked() {
-                                    self.hotkey_cu_shortcut.clear();
-                                }
-                            }
-                        });
-                        ui.end_row();
-
-                        ui.label("");
-                        ui.checkbox(&mut self.hotkey_cu_include_super, "Include Super/Win key (CU)");
-                        ui.end_row();
+                        draw_hotkey_capture(
+                            ui,
+                            &mut self.capture_state,
+                            &mut self.capture_target,
+                            CaptureTarget::ComputerUse,
+                            &mut self.hotkey_cu_shortcut,
+                            &mut self.hotkey_cu_include_super,
+                            "CU Hotkey",
+                        );
                     }
                 });
             });
@@ -894,35 +910,6 @@ impl SettingsApp {
         registry.get(model_id).map_or(false, |e| {
             matches!(e.status, DownloadStatus::Downloaded { .. })
         })
-    }
-
-    /// Toggle "Super" in the current shortcut string when the checkbox changes.
-    fn toggle_super_in_shortcut(&mut self) {
-        if self.hotkey_include_super {
-            // Insert Super before the final (key) token
-            let parts: Vec<&str> = self.hotkey_dict_shortcut.split('+').collect();
-            let mut new_parts = Vec::with_capacity(parts.len() + 1);
-            for (i, part) in parts.iter().enumerate() {
-                if i == parts.len() - 1 {
-                    new_parts.push("Super");
-                }
-                new_parts.push(part);
-            }
-            self.hotkey_dict_shortcut = new_parts.join("+");
-        } else {
-            // Remove Super/Win/Meta/Cmd tokens
-            self.hotkey_dict_shortcut = self
-                .hotkey_dict_shortcut
-                .split('+')
-                .filter(|t| {
-                    !matches!(
-                        t.trim().to_lowercase().as_str(),
-                        "super" | "win" | "meta" | "cmd"
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("+");
-        }
     }
 
     #[cfg(feature = "zluda")]

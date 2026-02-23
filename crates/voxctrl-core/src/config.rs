@@ -436,10 +436,46 @@ mod tests {
 
     #[test]
     fn test_nested_config_roundtrip() {
-        let cfg = Config::default();
+        let mut cfg = Config::default();
+        cfg.action.cu_provider_type = "openai".into();
         let json = serde_json::to_string_pretty(&cfg).unwrap();
         let parsed: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.stt.backend, cfg.stt.backend);
         assert_eq!(parsed.audio.sample_rate, cfg.audio.sample_rate);
+        assert_eq!(parsed.action.cu_provider_type, cfg.action.cu_provider_type);
+    }
+
+    #[test]
+    fn test_action_config_defaults() {
+        let action = ActionConfig::default();
+        assert_eq!(action.cu_provider_type, "anthropic");
+        assert_eq!(action.backend, "type-text");
+        assert!(action.cu_model.is_none());
+        assert!(action.cu_api_base_url.is_none());
+        assert!(action.cu_max_iterations.is_none());
+        assert!(action.cu_max_tree_depth.is_none());
+        assert!(action.cu_include_screenshots.is_none());
+    }
+
+    #[test]
+    fn test_action_config_roundtrip() {
+        let action = ActionConfig {
+            backend: "computer-use".into(),
+            cu_provider_type: "openai".into(),
+            cu_model: Some("gpt-4".into()),
+            cu_api_base_url: Some("https://api.openai.com".into()),
+            cu_max_iterations: Some(20),
+            cu_max_tree_depth: Some(12),
+            cu_include_screenshots: Some(true),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let parsed: ActionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.backend, "computer-use");
+        assert_eq!(parsed.cu_provider_type, "openai");
+        assert_eq!(parsed.cu_model.as_deref(), Some("gpt-4"));
+        assert_eq!(parsed.cu_api_base_url.as_deref(), Some("https://api.openai.com"));
+        assert_eq!(parsed.cu_max_iterations, Some(20));
+        assert_eq!(parsed.cu_max_tree_depth, Some(12));
+        assert_eq!(parsed.cu_include_screenshots, Some(true));
     }
 }

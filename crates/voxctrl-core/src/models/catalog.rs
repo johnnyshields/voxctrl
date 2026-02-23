@@ -131,3 +131,15 @@ pub fn required_vad_model_id(vad_backend: &str) -> Option<String> {
 pub fn required_model_id(cfg: &Config) -> Option<String> {
     required_stt_model_id(&cfg.stt.backend, &cfg.stt.whisper_model)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_category_display() {
+        assert_eq!(ModelCategory::Stt.to_string(), "STT");
+        assert_eq!(ModelCategory::Vad.to_string(), "VAD");
+        assert_eq!(ModelCategory::ComputerUse.to_string(), "CU");
+    }
+}
