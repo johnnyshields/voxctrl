@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -8,6 +9,11 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use voxctrl_core::config::{self, GpuBackend};
 use voxctrl_core::models::{DownloadStatus, ModelCategory, ModelRegistry};
 use voxctrl_core::models::catalog::ModelInfo;
+
+/// Duration to show the green "Saved" flash after a config section changes.
+const FLASH_DURATION: Duration = Duration::from_millis(1500);
+/// Same value as fractional seconds, for the alpha fade calculation.
+const FLASH_DURATION_SECS: f32 = FLASH_DURATION.as_millis() as f32 / 1000.0;
 
 // ── Option tables for combo boxes ─────────────────────────────────────────
 
@@ -368,6 +374,60 @@ impl Default for TestState {
     }
 }
 
+/// Snapshot of all editable fields — compared each frame to detect changes.
+#[derive(Clone, PartialEq)]
+struct SettingsSnapshot {
+    selected_device: String,
+    hotkey_dict_shortcut: String,
+    hotkey_cu_shortcut: String,
+    stt_backend: String,
+    whisper_model: String,
+    vad_backend: String,
+    gpu_backend: GpuBackend,
+    cu_provider_type: String,
+    cu_model: String,
+    cu_api_base_url: String,
+    cu_max_iterations: String,
+    cu_max_tree_depth: String,
+    cu_include_screenshots: bool,
+}
+
+impl SettingsSnapshot {
+    /// Determine which section(s) changed between two snapshots.
+    fn changed_sections(&self, other: &Self) -> Vec<&'static str> {
+        let mut sections = Vec::new();
+        if self.selected_device != other.selected_device {
+            sections.push("Input");
+        }
+        if self.hotkey_dict_shortcut != other.hotkey_dict_shortcut
+            || self.hotkey_cu_shortcut != other.hotkey_cu_shortcut
+        {
+            sections.push("Hotkeys");
+        }
+        if self.stt_backend != other.stt_backend
+            || self.whisper_model != other.whisper_model
+        {
+            sections.push("Speech-to-Text");
+        }
+        if self.vad_backend != other.vad_backend {
+            sections.push("Voice Activity Detection");
+        }
+        if self.gpu_backend != other.gpu_backend {
+            sections.push("GPU / Acceleration");
+        }
+        if self.cu_provider_type != other.cu_provider_type
+            || self.cu_model != other.cu_model
+            || self.cu_api_base_url != other.cu_api_base_url
+            || self.cu_max_iterations != other.cu_max_iterations
+            || self.cu_max_tree_depth != other.cu_max_tree_depth
+            || self.cu_include_screenshots != other.cu_include_screenshots
+        {
+            sections.push("Computer Use");
+        }
+        sections
+    }
+}
+
 pub struct SettingsApp {
     registry: Arc<Mutex<ModelRegistry>>,
     tab: Tab,
@@ -397,7 +457,7 @@ pub struct SettingsApp {
     show_hf_token: bool,
     models_directory: Option<PathBuf>,
     model_paths: HashMap<String, PathBuf>,
-    saved_flash: Option<std::time::Instant>,
+    section_flash: HashMap<&'static str, Instant>,
     // Computer Use settings (fields used when cu-* features enabled)
     #[allow(dead_code)]
     cu_provider_type: String,
@@ -422,6 +482,7 @@ pub struct SettingsApp {
     test_hotkey_error: Option<String>,
     test_hotkey_cu: Option<TestHotkeyState>,
     test_hotkey_cu_error: Option<String>,
+    prev_snapshot: SettingsSnapshot,
 }
 
 // ── Subprocess launcher ───────────────────────────────────────────────────
@@ -517,7 +578,7 @@ pub fn run_settings_standalone() -> anyhow::Result<()> {
         show_hf_token: false,
         models_directory: cfg.models.models_directory.clone(),
         model_paths: cfg.models.model_paths.clone(),
-        saved_flash: None,
+        section_flash: HashMap::new(),
         cu_provider_type: cfg.action.cu_provider_type.clone(),
         cu_model: cfg.action.cu_model.clone().unwrap_or_default(),
         cu_api_base_url: cfg.action.cu_api_base_url.clone().unwrap_or_default(),
@@ -535,6 +596,21 @@ pub fn run_settings_standalone() -> anyhow::Result<()> {
         test_hotkey_error: None,
         test_hotkey_cu: None,
         test_hotkey_cu_error: None,
+        prev_snapshot: SettingsSnapshot {
+            selected_device: cfg.audio.device_pattern.clone(),
+            hotkey_dict_shortcut: cfg.hotkey.dict_shortcut.clone(),
+            hotkey_cu_shortcut: cfg.hotkey.cu_shortcut.clone().unwrap_or_default(),
+            stt_backend: cfg.stt.backend.clone(),
+            whisper_model: cfg.stt.whisper_model.clone(),
+            vad_backend: cfg.vad.backend.clone(),
+            gpu_backend: cfg.gpu.backend,
+            cu_provider_type: cfg.action.cu_provider_type.clone(),
+            cu_model: cfg.action.cu_model.clone().unwrap_or_default(),
+            cu_api_base_url: cfg.action.cu_api_base_url.clone().unwrap_or_default(),
+            cu_max_iterations: cfg.action.cu_max_iterations.map_or(String::new(), |v| v.to_string()),
+            cu_max_tree_depth: cfg.action.cu_max_tree_depth.map_or(String::new(), |v| v.to_string()),
+            cu_include_screenshots: cfg.action.cu_include_screenshots.unwrap_or(false),
+        },
     };
 
     let options = eframe::NativeOptions {
@@ -677,6 +753,35 @@ impl eframe::App for SettingsApp {
             }
         });
 
+        // ── Auto-save on change ──────────────────────────────────────
+        let current = SettingsSnapshot {
+            selected_device: self.selected_device.clone(),
+            hotkey_dict_shortcut: self.hotkey_dict_shortcut.clone(),
+            hotkey_cu_shortcut: self.hotkey_cu_shortcut.clone(),
+            stt_backend: self.stt_backend.clone(),
+            whisper_model: self.whisper_model.clone(),
+            vad_backend: self.vad_backend.clone(),
+            gpu_backend: self.gpu_backend,
+            cu_provider_type: self.cu_provider_type.clone(),
+            cu_model: self.cu_model.clone(),
+            cu_api_base_url: self.cu_api_base_url.clone(),
+            cu_max_iterations: self.cu_max_iterations.clone(),
+            cu_max_tree_depth: self.cu_max_tree_depth.clone(),
+            cu_include_screenshots: self.cu_include_screenshots,
+        };
+        if current != self.prev_snapshot {
+            let changed = self.prev_snapshot.changed_sections(&current);
+            let now = Instant::now();
+            for section in &changed {
+                self.section_flash.insert(section, now);
+            }
+            self.save_config();
+            self.prev_snapshot = current;
+        }
+
+        // Expire old flashes
+        self.section_flash.retain(|_, t| t.elapsed() < FLASH_DURATION);
+
         let has_download = {
             let reg = self.registry.lock().unwrap();
             reg.entries()
@@ -687,9 +792,11 @@ impl eframe::App for SettingsApp {
         let mut has_bg_work = has_download;
         #[cfg(feature = "zluda")]
         { has_bg_work = has_bg_work || self.zluda_downloading; }
+        let has_active_flash = !self.section_flash.is_empty();
         let repaint_ms =
             if self.capture_state == CaptureState::Listening
                 || self.tab == Tab::Test
+                || has_active_flash
             {
                 50
             } else if has_bg_work {
@@ -704,6 +811,23 @@ impl eframe::App for SettingsApp {
 // ── Settings tab ──────────────────────────────────────────────────────────
 
 impl SettingsApp {
+    /// Draw a section header with a fading green checkmark if recently saved.
+    fn draw_section_header(&self, ui: &mut egui::Ui, label: &'static str) {
+        ui.horizontal(|ui| {
+            ui.strong(label);
+            if let Some(&t) = self.section_flash.get(label) {
+                let elapsed = t.elapsed().as_secs_f32();
+                let alpha = ((1.0 - elapsed / FLASH_DURATION_SECS) * 255.0).clamp(0.0, 255.0) as u8;
+                if alpha > 0 {
+                    ui.colored_label(
+                        egui::Color32::from_rgba_unmultiplied(0, 200, 0, alpha),
+                        "\u{2713} Saved",
+                    );
+                }
+            }
+        });
+    }
+
     fn draw_settings_tab(&mut self, ui: &mut egui::Ui) {
         let required_stt = self.required_stt_model_id();
         let required_vad = self.required_vad_model_id();
@@ -713,7 +837,7 @@ impl SettingsApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             // ── Input section ──
             ui.group(|ui| {
-                ui.strong("Input");
+                self.draw_section_header(ui, "Input");
                 egui::Grid::new("settings_input").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     ui.label("Mic Input");
                     egui::ComboBox::from_id_salt("mic_input")
@@ -739,7 +863,7 @@ impl SettingsApp {
 
             // ── Hotkeys section ──
             ui.group(|ui| {
-                ui.strong("Hotkeys");
+                self.draw_section_header(ui, "Hotkeys");
                 egui::Grid::new("settings_hotkeys").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     draw_hotkey_capture(
                         ui,
@@ -770,7 +894,7 @@ impl SettingsApp {
 
             // ── Speech-to-Text section ──
             ui.group(|ui| {
-                ui.strong("Speech-to-Text");
+                self.draw_section_header(ui, "Speech-to-Text");
                 egui::Grid::new("settings_stt").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     ui.label("STT Backend");
                     ui.horizontal(|ui| {
@@ -809,7 +933,7 @@ impl SettingsApp {
 
             // ── Voice Activity Detection section ──
             ui.group(|ui| {
-                ui.strong("Voice Activity Detection");
+                self.draw_section_header(ui, "Voice Activity Detection");
                 egui::Grid::new("settings_vad").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     ui.label("VAD Backend");
                     ui.horizontal(|ui| {
@@ -832,7 +956,7 @@ impl SettingsApp {
 
             // ── GPU / Acceleration section ──
             ui.group(|ui| {
-                ui.strong("GPU / Acceleration");
+                self.draw_section_header(ui, "GPU / Acceleration");
                 egui::Grid::new("settings_gpu").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     ui.label("GPU Backend");
                     {
@@ -884,7 +1008,7 @@ impl SettingsApp {
             #[cfg(any(feature = "cu-windows", feature = "cu-macos", feature = "cu-linux"))]
             {
                 ui.group(|ui| {
-                    ui.strong("Computer Use");
+                    self.draw_section_header(ui, "Computer Use");
                     egui::Grid::new("settings_cu").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                         ui.label("Provider");
                         egui::ComboBox::from_id_salt("cu_provider")
@@ -921,18 +1045,7 @@ impl SettingsApp {
                 ui.add_space(4.0);
             }
 
-            // Save button + flash
-            if ui.button("  Save  ").clicked() {
-                self.save_config();
-            }
-
-            if let Some(t) = self.saved_flash {
-                if t.elapsed() < std::time::Duration::from_secs(3) {
-                    ui.colored_label(egui::Color32::GREEN, "Saved!");
-                } else {
-                    self.saved_flash = None;
-                }
-            }
+            // (Auto-save happens in update() — no manual Save button needed)
         });
     }
 
@@ -1002,8 +1115,7 @@ impl SettingsApp {
         let mut reg = self.registry.lock().unwrap();
         reg.scan_cache(&cfg.models);
         drop(reg);
-        self.saved_flash = Some(std::time::Instant::now());
-        log::info!("Config saved");
+        log::info!("Config saved (auto-save)");
     }
 }
 
@@ -2418,4 +2530,72 @@ fn abbreviate_path(path: &std::path::Path) -> String {
     }
     let tail: PathBuf = components[components.len() - 2..].iter().collect();
     format!("\u{2026}/{}", tail.display().to_string().replace('\\', "/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            selected_device: "DJI".into(),
+            hotkey_dict_shortcut: "Ctrl+Super+Space".into(),
+            hotkey_cu_shortcut: String::new(),
+            stt_backend: "voxtral-http".into(),
+            whisper_model: "small".into(),
+            vad_backend: "energy".into(),
+            gpu_backend: GpuBackend::Auto,
+            cu_provider_type: "anthropic".into(),
+            cu_model: String::new(),
+            cu_api_base_url: String::new(),
+            cu_max_iterations: String::new(),
+            cu_max_tree_depth: String::new(),
+            cu_include_screenshots: false,
+        }
+    }
+
+    #[test]
+    fn identical_snapshots_yield_no_changes() {
+        let a = default_snapshot();
+        let b = default_snapshot();
+        assert!(a.changed_sections(&b).is_empty());
+    }
+
+    #[test]
+    fn single_field_change_returns_correct_section() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.stt_backend = "whisper-cpp".into();
+        assert_eq!(a.changed_sections(&b), vec!["Speech-to-Text"]);
+    }
+
+    #[test]
+    fn multiple_section_changes_returns_all() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.selected_device = "Rode".into();
+        b.vad_backend = "silero".into();
+        b.gpu_backend = GpuBackend::Cuda;
+        let sections = a.changed_sections(&b);
+        assert!(sections.contains(&"Input"));
+        assert!(sections.contains(&"Voice Activity Detection"));
+        assert!(sections.contains(&"GPU / Acceleration"));
+        assert_eq!(sections.len(), 3);
+    }
+
+    #[test]
+    fn hotkey_change_returns_hotkeys_section() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.hotkey_dict_shortcut = "Ctrl+Alt+D".into();
+        assert_eq!(a.changed_sections(&b), vec!["Hotkeys"]);
+    }
+
+    #[test]
+    fn cu_field_change_returns_computer_use_section() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.cu_model = "gpt-4".into();
+        assert_eq!(a.changed_sections(&b), vec!["Computer Use"]);
+    }
 }
