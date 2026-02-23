@@ -87,6 +87,31 @@ pub fn wsl2_hf_cache_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Find a cached HF model by repo name across all known cache directories.
+///
+/// Searches the standard Linux HF cache first, then any WSL2 Windows AppData caches.
+/// Returns the snapshot path if a snapshot containing all `required_files` is found.
+pub fn find_hf_model(repo: &str, required_files: &[&str]) -> Option<PathBuf> {
+    let mut cache_dirs: Vec<PathBuf> = Vec::new();
+    if let Some(d) = hf_cache_dir() {
+        cache_dirs.push(d);
+    }
+    cache_dirs.extend(wsl2_hf_cache_dirs());
+
+    let model_dir_name = format!("models--{}", repo.replace('/', "--"));
+    let owned_files: Vec<String> = required_files.iter().map(|s| s.to_string()).collect();
+
+    for cache_dir in &cache_dirs {
+        let snapshots_dir = cache_dir.join(&model_dir_name).join("snapshots");
+        if snapshots_dir.is_dir() {
+            if let Some((path, _size)) = find_snapshot(&snapshots_dir, &owned_files) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 /// Return the HF Hub cache directory path.
 pub fn hf_cache_dir() -> Option<PathBuf> {
     // Respect HF_HOME / HF_HUB_CACHE env vars
@@ -324,5 +349,81 @@ mod tests {
         fs::write(tmp.path().join("a.txt"), b"x").unwrap();
         fs::write(tmp.path().join("b.txt"), b"y").unwrap();
         assert!(has_all_files(tmp.path(), &["a.txt".into(), "b.txt".into()]));
+    }
+
+    // ── scan_models_directory tests ──────────────────────────────────────
+
+    #[test]
+    fn scan_models_dir_finds_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let model_dir = tmp.path().join("acme").join("great-model");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("weights.bin"), b"data").unwrap();
+
+        let mut entries = vec![make_entry("acme/great-model", "acme/great-model", &["weights.bin"])];
+        scan_models_directory(&mut entries, tmp.path());
+
+        match &entries[0].status {
+            DownloadStatus::Downloaded { path, size_bytes } => {
+                assert_eq!(path, &model_dir);
+                assert!(*size_bytes > 0);
+            }
+            other => panic!("Expected Downloaded, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn scan_models_dir_skips_incomplete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let model_dir = tmp.path().join("acme").join("partial");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("a.bin"), b"data").unwrap();
+        // Missing b.bin
+
+        let mut entries = vec![make_entry("acme/partial", "acme/partial", &["a.bin", "b.bin"])];
+        scan_models_directory(&mut entries, tmp.path());
+
+        assert!(matches!(entries[0].status, DownloadStatus::NotDownloaded));
+    }
+
+    #[test]
+    fn scan_models_dir_ignores_nonexistent() {
+        let mut entries = vec![make_entry("x/y", "x/y", &["f.bin"])];
+        scan_models_directory(&mut entries, Path::new("/nonexistent/path/12345"));
+
+        assert!(matches!(entries[0].status, DownloadStatus::NotDownloaded));
+    }
+
+    // ── apply_model_paths tests ──────────────────────────────────────────
+
+    #[test]
+    fn apply_model_paths_overrides_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("model.bin"), b"data").unwrap();
+
+        let mut entries = vec![make_entry("my-model", "org/repo", &[])];
+        let mut paths = HashMap::new();
+        paths.insert("my-model".to_string(), tmp.path().to_path_buf());
+
+        apply_model_paths(&mut entries, &paths);
+
+        match &entries[0].status {
+            DownloadStatus::Downloaded { path, size_bytes } => {
+                assert_eq!(path, tmp.path());
+                assert!(*size_bytes > 0);
+            }
+            other => panic!("Expected Downloaded, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_model_paths_skips_nonexistent() {
+        let mut entries = vec![make_entry("my-model", "org/repo", &[])];
+        let mut paths = HashMap::new();
+        paths.insert("my-model".to_string(), PathBuf::from("/nonexistent/12345"));
+
+        apply_model_paths(&mut entries, &paths);
+
+        assert!(matches!(entries[0].status, DownloadStatus::NotDownloaded));
     }
 }
