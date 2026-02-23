@@ -47,3 +47,7 @@ dirs = "5"
 [[example]]
 name = "test_whisper"
 required-features = ["stt-whisper-native"]
+
+[[example]]
+name = "test_voxtral"
+required-features = ["stt-voxtral-native"]

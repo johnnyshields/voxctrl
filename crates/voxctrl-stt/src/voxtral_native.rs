@@ -165,3 +165,31 @@ impl Transcriber for VoxtralNativeTranscriber {
         self.inner.is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voxctrl_core::stt::Transcriber;
+
+    #[test]
+    fn pending_transcriber_when_no_model_dir() {
+        let t = VoxtralNativeTranscriber::new(None).unwrap();
+        assert!(!t.is_available());
+        assert!(t.name().contains("pending"));
+    }
+
+    #[test]
+    fn pending_transcriber_transcribe_returns_error() {
+        let t = VoxtralNativeTranscriber::new(None).unwrap();
+        let err = t.transcribe(Path::new("/tmp/dummy.wav")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("download"), "expected 'download' in error: {msg}");
+    }
+
+    #[test]
+    fn new_with_nonexistent_dir_is_pending() {
+        let t = VoxtralNativeTranscriber::new(Some("/nonexistent/voxtral/path".into())).unwrap();
+        assert!(!t.is_available());
+        assert!(t.name().contains("pending"));
+    }
+}
