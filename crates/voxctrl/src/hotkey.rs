@@ -298,7 +298,6 @@ mod tests {
     }
 
     fn make_test_pipeline() -> Arc<Pipeline> {
-        use std::sync::Mutex;
         use voxctrl_core::action::ActionExecutor;
         use voxctrl_core::router::{Intent, IntentRouter};
         use voxctrl_core::stt::Transcriber;
