@@ -440,9 +440,8 @@ fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
 fn contains_non_latin(text: &str) -> bool {
     text.chars().any(|c| {
         matches!(c,
-            '\u{2E80}'..='\u{9FFF}'  // CJK Radicals Supplement through CJK Unified Ideographs
+            '\u{2E80}'..='\u{9FFF}'  // CJK Radicals Supplement through CJK Unified Ideographs (includes Hiragana + Katakana)
             | '\u{AC00}'..='\u{D7AF}' // Hangul Syllables
-            | '\u{3040}'..='\u{30FF}' // Hiragana + Katakana
             | '\u{1100}'..='\u{11FF}' // Hangul Jamo
         )
     })
