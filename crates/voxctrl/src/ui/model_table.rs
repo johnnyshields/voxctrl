@@ -1608,27 +1608,8 @@ fn transcribe_chunks(
     let wav_size = std::fs::metadata(tmp.path()).map(|m| m.len()).unwrap_or(0);
     log::info!("[testbed] WAV written: {:?}, {} bytes", tmp.path(), wav_size);
 
-    // Try the named-pipe STT server first (main process owns the pipeline).
-    // If that fails (e.g. main process not running), fall back to creating
-    // a local transcriber directly.
-    log::info!("[testbed] Trying STT via named-pipe server...");
     let wav_data = std::fs::read(tmp.path())?;
-    match voxctrl_core::stt_client::transcribe_via_server(&wav_data) {
-        Ok(text) => {
-            log::info!("[testbed] Server transcription OK: {:?}", text);
-            Ok(text)
-        }
-        Err(server_err) => {
-            log::warn!("[testbed] Server unavailable ({server_err:#}), trying direct transcriber...");
-            let transcriber = voxctrl_core::stt::create_transcriber(stt_cfg, None, Some(&voxctrl_stt::stt_factory))?;
-            let result = transcriber.transcribe(tmp.path());
-            match &result {
-                Ok(text) => log::info!("[testbed] Direct transcription OK: {:?}", text),
-                Err(e) => log::error!("[testbed] Direct transcription failed: {e:#}"),
-            }
-            result
-        }
-    }
+    transcribe_via_server_or_direct(&wav_data, stt_cfg)
 }
 
 /// Transcribe from raw WAV bytes (e.g. loaded from a file).
@@ -1637,8 +1618,14 @@ fn transcribe_wav_data(
     stt_cfg: &config::SttConfig,
 ) -> anyhow::Result<String> {
     log::info!("[testbed] transcribe_wav_data: {} bytes", wav_data.len());
+    transcribe_via_server_or_direct(wav_data, stt_cfg)
+}
 
-    // Try the named-pipe STT server first.
+/// Try the named-pipe STT server first; fall back to a local transcriber.
+fn transcribe_via_server_or_direct(
+    wav_data: &[u8],
+    stt_cfg: &config::SttConfig,
+) -> anyhow::Result<String> {
     log::info!("[testbed] Trying STT via named-pipe server...");
     match voxctrl_core::stt_client::transcribe_via_server(wav_data) {
         Ok(text) => {
@@ -1647,7 +1634,6 @@ fn transcribe_wav_data(
         }
         Err(server_err) => {
             log::warn!("[testbed] Server unavailable ({server_err:#}), trying direct transcriber...");
-            // Write to temp file for transcriber API
             let tmp = tempfile::Builder::new().suffix(".wav").tempfile()?;
             std::fs::write(tmp.path(), wav_data)?;
             let transcriber = voxctrl_core::stt::create_transcriber(stt_cfg, None, Some(&voxctrl_stt::stt_factory))?;

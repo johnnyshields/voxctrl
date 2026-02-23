@@ -111,39 +111,18 @@ impl WhisperNativeTranscriber {
         });
 
         // Build suppress list: config.suppress_tokens + SOT + all timestamp tokens
-        let mut suppress_tokens = config.suppress_tokens.clone();
-        suppress_tokens.push(sot_token);
-        // Suppress timestamp tokens (50364 and above, below vocab_size)
-        for t in no_timestamps_token + 1..config.vocab_size as u32 {
-            suppress_tokens.push(t);
-        }
-        suppress_tokens.sort_unstable();
-        suppress_tokens.dedup();
+        let suppress_tokens = build_suppress_token_list(
+            &config.suppress_tokens, sot_token, no_timestamps_token, config.vocab_size,
+        );
 
         // Pre-compute suppress mask tensor (reused every decode step).
-        let suppress_mask_vec: Vec<f32> = (0..config.vocab_size)
-            .map(|i| {
-                if suppress_tokens.binary_search(&(i as u32)).is_ok() {
-                    f32::NEG_INFINITY
-                } else {
-                    0.0
-                }
-            })
-            .collect();
+        let suppress_mask_vec = build_token_mask(&suppress_tokens, config.vocab_size);
         let suppress_mask = Tensor::from_vec(suppress_mask_vec, config.vocab_size, &device)?;
 
         // Pre-compute begin_suppress mask (applied only on the first output token).
         // Whisper's begin_suppress_tokens typically includes EOT (50257) and space (220)
         // to prevent the model from immediately predicting "no speech".
-        let begin_suppress_mask_vec: Vec<f32> = (0..config.vocab_size)
-            .map(|i| {
-                if begin_suppress_tokens.contains(&(i as u32)) {
-                    f32::NEG_INFINITY
-                } else {
-                    0.0
-                }
-            })
-            .collect();
+        let begin_suppress_mask_vec = build_token_mask(&begin_suppress_tokens, config.vocab_size);
         let begin_suppress_mask = Tensor::from_vec(begin_suppress_mask_vec, config.vocab_size, &device)?;
         log::info!(
             "WhisperNativeTranscriber: begin_suppress_tokens={:?}",
@@ -234,7 +213,7 @@ impl Transcriber for WhisperNativeTranscriber {
         // ── Resample to 16 kHz if needed ─────────────────────────────
         let raw = if spec.sample_rate != m::SAMPLE_RATE as u32 {
             let raw = resample(&raw, spec.sample_rate, m::SAMPLE_RATE as u32);
-            log::info!(
+            log::debug!(
                 "[whisper-dbg] Resampled {}Hz -> {}Hz: {} samples ({:.2}s)",
                 spec.sample_rate, m::SAMPLE_RATE, raw.len(),
                 raw.len() as f64 / m::SAMPLE_RATE as f64
@@ -259,7 +238,7 @@ impl Transcriber for WhisperNativeTranscriber {
         );
 
         let mel_tensor = Tensor::from_vec(mel, (1, n_mel, n_frames), &self.device)?;
-        log::info!("[whisper-dbg] Mel tensor shape: {:?}", mel_tensor.dims());
+        log::debug!("[whisper-dbg] Mel tensor shape: {:?}", mel_tensor.dims());
 
         // ── Encode ──────────────────────────────────────────────────────
         let mut model = self
@@ -267,7 +246,7 @@ impl Transcriber for WhisperNativeTranscriber {
             .lock()
             .map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
         let encoder_output = model.encoder.forward(&mel_tensor, true)?;
-        log::info!("[whisper-dbg] Encoder output shape: {:?}", encoder_output.dims());
+        log::debug!("[whisper-dbg] Encoder output shape: {:?}", encoder_output.dims());
 
         // ── Greedy decode ───────────────────────────────────────────────
         let mut tokens: Vec<u32> = vec![self.sot_token];
@@ -313,14 +292,14 @@ impl Transcriber for WhisperNativeTranscriber {
             if step < 10 || step % 50 == 0 {
                 let token_text = self.tokenizer.decode(&[next_token], false).unwrap_or_default();
                 let top_logit = last_logits.max(0)?.to_scalar::<f32>()?;
-                log::info!(
+                log::debug!(
                     "[whisper-dbg] Step {}: token={} {:?}, logit={:.2}",
                     step, next_token, token_text, top_logit
                 );
             }
 
             if next_token == self.eot_token {
-                log::info!("[whisper-dbg] EOT at step {}", step);
+                log::debug!("[whisper-dbg] EOT at step {}", step);
                 break;
             }
             tokens.push(next_token);
@@ -352,6 +331,42 @@ impl Transcriber for WhisperNativeTranscriber {
     fn is_available(&self) -> bool {
         true
     }
+}
+
+/// Build the sorted, deduplicated list of tokens to suppress during decoding.
+///
+/// Includes the config's `suppress_tokens`, the SOT token, and all timestamp
+/// tokens (from `no_timestamps_token + 1` up to `vocab_size`).
+fn build_suppress_token_list(
+    config_suppress_tokens: &[u32],
+    sot_token: u32,
+    no_timestamps_token: u32,
+    vocab_size: usize,
+) -> Vec<u32> {
+    let mut tokens = config_suppress_tokens.to_vec();
+    tokens.push(sot_token);
+    for t in no_timestamps_token + 1..vocab_size as u32 {
+        tokens.push(t);
+    }
+    tokens.sort_unstable();
+    tokens.dedup();
+    tokens
+}
+
+/// Build a float mask: `-inf` at each position in `suppressed`, `0.0` elsewhere.
+fn build_token_mask(suppressed: &[u32], vocab_size: usize) -> Vec<f32> {
+    // `suppressed` is expected to be sorted (from build_suppress_token_list or small list).
+    let mut sorted = suppressed.to_vec();
+    sorted.sort_unstable();
+    (0..vocab_size)
+        .map(|i| {
+            if sorted.binary_search(&(i as u32)).is_ok() {
+                f32::NEG_INFINITY
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
 
 /// Resample audio from `from_rate` to `to_rate` using linear interpolation.
@@ -386,4 +401,132 @@ fn audio_stats(data: &[f32]) -> (f32, f32, f32) {
         sum += v as f64;
     }
     (min, max, (sum / data.len() as f64) as f32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── resample tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn resample_identity() {
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let out = resample(&input, 16000, 16000);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn resample_empty() {
+        let out = resample(&[], 44100, 16000);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn resample_downsample_2x() {
+        // 32 kHz -> 16 kHz: output should be half the length.
+        let input: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        let out = resample(&input, 32000, 16000);
+        assert_eq!(out.len(), 50);
+        // First sample is always sample[0].
+        assert!((out[0] - 0.0).abs() < 1e-6);
+        // Second output sample should correspond to input index 2.0 (linear interp).
+        assert!((out[1] - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn resample_upsample_2x() {
+        // 8 kHz -> 16 kHz: output should be double the length.
+        let input = vec![0.0, 1.0, 2.0, 3.0];
+        let out = resample(&input, 8000, 16000);
+        assert_eq!(out.len(), 8);
+        assert!((out[0] - 0.0).abs() < 1e-6);
+        // Midpoint between input[0] and input[1] should be ~0.5.
+        assert!((out[1] - 0.5).abs() < 1e-4);
+    }
+
+    // ── audio_stats tests ────────────────────────────────────────────────
+
+    #[test]
+    fn audio_stats_empty() {
+        assert_eq!(audio_stats(&[]), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn audio_stats_single_value() {
+        let (min, max, mean) = audio_stats(&[0.5]);
+        assert!((min - 0.5).abs() < 1e-6);
+        assert!((max - 0.5).abs() < 1e-6);
+        assert!((mean - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn audio_stats_range() {
+        let data = vec![-1.0, 0.0, 1.0];
+        let (min, max, mean) = audio_stats(&data);
+        assert!((min - (-1.0)).abs() < 1e-6);
+        assert!((max - 1.0).abs() < 1e-6);
+        assert!(mean.abs() < 1e-6);
+    }
+
+    // ── suppress mask tests ──────────────────────────────────────────────
+
+    #[test]
+    fn build_token_mask_basic() {
+        let mask = build_token_mask(&[1, 3], 5);
+        assert_eq!(mask.len(), 5);
+        assert_eq!(mask[0], 0.0);
+        assert_eq!(mask[1], f32::NEG_INFINITY);
+        assert_eq!(mask[2], 0.0);
+        assert_eq!(mask[3], f32::NEG_INFINITY);
+        assert_eq!(mask[4], 0.0);
+    }
+
+    #[test]
+    fn build_token_mask_empty_suppressed() {
+        let mask = build_token_mask(&[], 4);
+        assert_eq!(mask.len(), 4);
+        assert!(mask.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn build_token_mask_unsorted_input() {
+        // build_token_mask should handle unsorted input (it sorts internally).
+        let mask = build_token_mask(&[3, 1], 5);
+        assert_eq!(mask[1], f32::NEG_INFINITY);
+        assert_eq!(mask[3], f32::NEG_INFINITY);
+        assert_eq!(mask[0], 0.0);
+    }
+
+    #[test]
+    fn build_suppress_token_list_includes_sot_and_timestamps() {
+        // vocab_size=20, sot=10, no_timestamps=15 -> timestamps 16..20 suppressed
+        let config_tokens = vec![2, 5];
+        let list = build_suppress_token_list(&config_tokens, 10, 15, 20);
+
+        // Must contain config tokens, SOT, and timestamp tokens 16,17,18,19
+        for &t in &[2, 5, 10, 16, 17, 18, 19] {
+            assert!(list.contains(&t), "expected {t} in suppress list");
+        }
+        // Must be sorted and deduplicated
+        for w in list.windows(2) {
+            assert!(w[0] < w[1], "suppress list not sorted: {:?}", list);
+        }
+        // no_timestamps_token (15) itself should NOT be in the list
+        // (unless it was in config_tokens, which it isn't here)
+        assert!(!list.contains(&15));
+    }
+
+    #[test]
+    fn suppress_mask_has_correct_dimensions() {
+        // End-to-end: build list -> build mask -> check dimensions match vocab_size
+        let vocab_size = 100;
+        let list = build_suppress_token_list(&[1, 50], 50, 90, vocab_size);
+        let mask = build_token_mask(&list, vocab_size);
+        assert_eq!(mask.len(), vocab_size);
+
+        // Count suppressed positions
+        let n_suppressed = mask.iter().filter(|&&v| v == f32::NEG_INFINITY).count();
+        assert_eq!(n_suppressed, list.len());
+    }
 }

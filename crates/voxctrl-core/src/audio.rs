@@ -5,31 +5,29 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleRate, StreamConfig};
+use cpal::{Device, SampleRate, StreamConfig};
 
 use crate::config::Config;
 use crate::{AppStatus, SharedState};
 
-/// Start the always-on audio capture stream.
-pub fn start_capture(state: Arc<SharedState>, cfg: &Config) -> Result<cpal::Stream> {
+/// Find an input device matching `pattern` and build a mono `StreamConfig` at
+/// the requested sample rate, falling back to the device default when the exact
+/// rate isn't supported.  Returns `(device, config, actual_sample_rate)`.
+fn resolve_device_and_config(pattern: &str, sample_rate: u32) -> Result<(Device, StreamConfig, u32)> {
     let host = cpal::default_host();
-
-    let pattern = cfg.audio.device_pattern.to_lowercase();
+    let pat = pattern.to_lowercase();
     let device = host
         .input_devices()
         .context("Failed to enumerate input devices")?
         .find(|d| {
             d.name()
-                .map(|n| n.to_lowercase().contains(&pattern))
+                .map(|n| n.to_lowercase().contains(&pat))
                 .unwrap_or(false)
         })
         .or_else(|| host.default_input_device())
         .context("No input audio device found")?;
 
-    let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
-    log::info!("Audio device: {device_name}");
-
-    let desired_rate = SampleRate(cfg.audio.sample_rate);
+    let desired_rate = SampleRate(sample_rate);
     let stream_config: StreamConfig = match device
         .supported_input_configs()
         .context("Cannot query device input configs")?
@@ -47,9 +45,10 @@ pub fn start_capture(state: Arc<SharedState>, cfg: &Config) -> Result<cpal::Stre
             let default = device
                 .default_input_config()
                 .context("No default input config")?;
+            let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
             log::warn!(
                 "{}Hz not supported by '{}'; falling back to {}Hz",
-                cfg.audio.sample_rate,
+                sample_rate,
                 device_name,
                 default.sample_rate().0,
             );
@@ -57,9 +56,20 @@ pub fn start_capture(state: Arc<SharedState>, cfg: &Config) -> Result<cpal::Stre
         }
     };
 
+    let actual_rate = stream_config.sample_rate.0;
+    Ok((device, stream_config, actual_rate))
+}
+
+/// Start the always-on audio capture stream.
+pub fn start_capture(state: Arc<SharedState>, cfg: &Config) -> Result<cpal::Stream> {
+    let (device, stream_config, actual_rate) =
+        resolve_device_and_config(&cfg.audio.device_pattern, cfg.audio.sample_rate)?;
+
+    let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
+    log::info!("Audio device: {device_name}");
     log::info!(
         "Stream: {}Hz, {}ch",
-        stream_config.sample_rate.0,
+        actual_rate,
         stream_config.channels,
     );
 
@@ -100,7 +110,6 @@ pub fn list_input_devices() -> Vec<String> {
 
 /// Start a test audio capture stream that sends RMS levels and raw samples.
 ///
-/// Returns (stream, level_receiver). The stream must be kept alive.
 /// `test_chunks` receives raw f32 samples when `recording` is true.
 /// Returns `(stream, actual_sample_rate)`.
 pub fn start_test_capture(
@@ -110,44 +119,9 @@ pub fn start_test_capture(
     test_chunks: Arc<std::sync::Mutex<Vec<f32>>>,
     recording: Arc<AtomicBool>,
 ) -> Result<(cpal::Stream, u32)> {
-    let host = cpal::default_host();
-    let pattern = device_pattern.to_lowercase();
-    let device = host
-        .input_devices()
-        .context("Failed to enumerate input devices")?
-        .find(|d| {
-            d.name()
-                .map(|n| n.to_lowercase().contains(&pattern))
-                .unwrap_or(false)
-        })
-        .or_else(|| host.default_input_device())
-        .context("No input audio device found")?;
+    let (device, stream_config, actual_rate) =
+        resolve_device_and_config(device_pattern, sample_rate)?;
 
-    let desired_rate = SampleRate(sample_rate);
-    let stream_config: StreamConfig = match device
-        .supported_input_configs()
-        .context("Cannot query device input configs")?
-        .find(|c| {
-            c.channels() >= 1
-                && c.min_sample_rate() <= desired_rate
-                && desired_rate <= c.max_sample_rate()
-        }) {
-        Some(range) => {
-            let mut sc: StreamConfig = range.with_sample_rate(desired_rate).into();
-            sc.channels = 1;
-            sc
-        }
-        None => {
-            let default = device
-                .default_input_config()
-                .context("No default input config")?;
-            log::warn!("Device does not support {}Hz, using default {}Hz",
-                sample_rate, default.sample_rate().0);
-            default.into()
-        }
-    };
-
-    let actual_rate = stream_config.sample_rate.0;
     log::info!("Test capture: device={:?}, actual_rate={}Hz", device.name(), actual_rate);
 
     let stream = device
