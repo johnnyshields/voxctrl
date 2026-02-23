@@ -5,6 +5,7 @@
 
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use byteorder::{ByteOrder, LittleEndian};
 use candle_core::{DType, Device, IndexOp, Tensor};
@@ -34,6 +35,7 @@ pub struct WhisperNativeTranscriber {
     no_timestamps_token: u32,
     suppress_mask: Tensor,
     begin_suppress_mask: Tensor,
+    inference_count: AtomicU64,
 }
 
 impl WhisperNativeTranscriber {
@@ -143,13 +145,19 @@ impl WhisperNativeTranscriber {
             no_timestamps_token,
             suppress_mask,
             begin_suppress_mask,
+            inference_count: AtomicU64::new(0),
         })
     }
 
     /// Core inference: takes raw f32 PCM samples at any sample rate, resamples to 16 kHz,
     /// runs mel spectrogram + encoder + greedy decode, and returns the transcribed text.
     fn run_inference(&self, samples: &[f32], sample_rate: u32) -> anyhow::Result<String> {
+        let call_num = self.inference_count.fetch_add(1, Ordering::Relaxed);
         let duration_secs = samples.len() as f64 / sample_rate as f64;
+        log::info!(
+            "[whisper-dbg] Inference #{}, {} samples, {:.2}s",
+            call_num, samples.len(), duration_secs
+        );
         let (amin, amax, amean) = audio_stats(samples);
         log::debug!(
             "[whisper-dbg] PCM: {} samples, {:.2}s, min={:.4}, max={:.4}, mean={:.6}",
@@ -191,8 +199,11 @@ impl WhisperNativeTranscriber {
             .model
             .lock()
             .map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        model.reset_kv_cache();
         let encoder_output = model.encoder.forward(&mel_tensor, true)?;
         log::debug!("[whisper-dbg] Encoder output shape: {:?}", encoder_output.dims());
+        let enc_mean = encoder_output.mean_all()?.to_scalar::<f32>()?;
+        log::debug!("[whisper-dbg] Encoder output mean={:.6}", enc_mean);
 
         // ── Greedy decode ───────────────────────────────────────────────
         let mut tokens: Vec<u32> = vec![self.sot_token];
@@ -532,5 +543,47 @@ mod tests {
         // Count suppressed positions
         let n_suppressed = mask.iter().filter(|&&v| v == f32::NEG_INFINITY).count();
         assert_eq!(n_suppressed, list.len());
+    }
+
+    // ── repeated inference stability test ────────────────────────────────
+
+    /// Verify that repeated transcriptions of the same audio produce
+    /// consistent results. This catches KV-cache state leaking between
+    /// calls. Requires model files on disk — skip in CI.
+    #[test]
+    #[ignore] // requires model files; run manually with `cargo test -- --ignored`
+    fn repeated_inference_stability() {
+        let cfg = SttConfig::default();
+        let transcriber = WhisperNativeTranscriber::new(&cfg, None)
+            .expect("failed to load model (is it downloaded?)");
+
+        // Generate a simple tone as repeatable test input (440 Hz, 2 seconds, 16 kHz).
+        let sample_rate = 16000u32;
+        let duration_secs = 2.0f32;
+        let num_samples = (sample_rate as f32 * duration_secs) as usize;
+        let samples: Vec<f32> = (0..num_samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.5
+            })
+            .collect();
+
+        let mut results = Vec::new();
+        for i in 0..5 {
+            let text = transcriber
+                .run_inference(&samples, sample_rate)
+                .unwrap_or_else(|e| panic!("inference #{i} failed: {e}"));
+            eprintln!("  inference #{i}: {:?}", text);
+            results.push(text);
+        }
+
+        // All results should be identical.
+        for (i, result) in results.iter().enumerate().skip(1) {
+            assert_eq!(
+                &results[0], result,
+                "inference #{i} differs from #0: {:?} vs {:?}",
+                results[0], result
+            );
+        }
     }
 }
