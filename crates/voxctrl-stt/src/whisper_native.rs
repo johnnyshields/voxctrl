@@ -33,6 +33,7 @@ pub struct WhisperNativeTranscriber {
     transcribe_token: u32,
     no_timestamps_token: u32,
     suppress_mask: Tensor,
+    begin_suppress_mask: Tensor,
 }
 
 impl WhisperNativeTranscriber {
@@ -68,7 +69,14 @@ impl WhisperNativeTranscriber {
             Self::resolve_via_hub(cfg)?
         };
 
-        let config: m::Config = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
+        let config_text = std::fs::read_to_string(&config_path)?;
+        let config: m::Config = serde_json::from_str(&config_text)?;
+
+        // Parse begin_suppress_tokens from raw JSON (not in candle's Config struct).
+        let begin_suppress_tokens: Vec<u32> = serde_json::from_str::<serde_json::Value>(&config_text)?
+            .get("begin_suppress_tokens")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
 
         // Load pre-computed mel filters (from OpenAI whisper assets, embedded at compile time).
         let mel_filters = load_mel_filters(config.num_mel_bins)?;
@@ -124,6 +132,24 @@ impl WhisperNativeTranscriber {
             .collect();
         let suppress_mask = Tensor::from_vec(suppress_mask_vec, config.vocab_size, &device)?;
 
+        // Pre-compute begin_suppress mask (applied only on the first output token).
+        // Whisper's begin_suppress_tokens typically includes EOT (50257) and space (220)
+        // to prevent the model from immediately predicting "no speech".
+        let begin_suppress_mask_vec: Vec<f32> = (0..config.vocab_size)
+            .map(|i| {
+                if begin_suppress_tokens.contains(&(i as u32)) {
+                    f32::NEG_INFINITY
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let begin_suppress_mask = Tensor::from_vec(begin_suppress_mask_vec, config.vocab_size, &device)?;
+        log::info!(
+            "WhisperNativeTranscriber: begin_suppress_tokens={:?}",
+            begin_suppress_tokens
+        );
+
         log::info!("WhisperNativeTranscriber: ready ({} suppress tokens)", suppress_tokens.len());
         Ok(Self {
             model: Mutex::new(model),
@@ -137,6 +163,7 @@ impl WhisperNativeTranscriber {
             transcribe_token,
             no_timestamps_token,
             suppress_mask,
+            begin_suppress_mask,
         })
     }
 
@@ -269,7 +296,13 @@ impl Transcriber for WhisperNativeTranscriber {
             let last_logits = logits.i((0, seq_len - 1))?;
 
             // Suppress special/timestamp tokens by setting their logits to -inf.
-            let last_logits = (last_logits + &self.suppress_mask)?;
+            let mut last_logits = (last_logits + &self.suppress_mask)?;
+
+            // On the first output token, also suppress begin_suppress_tokens
+            // (includes EOT to prevent the model from immediately predicting "no speech").
+            if step == 0 {
+                last_logits = (last_logits + &self.begin_suppress_mask)?;
+            }
 
             let next_token = last_logits
                 .argmax(0)?
