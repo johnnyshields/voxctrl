@@ -109,7 +109,7 @@ impl Default for ActionConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HotkeyConfig {
-    #[serde(default = "default_hotkey_shortcut", alias = "shortcut")]
+    #[serde(default = "default_hotkey_shortcut")]
     pub dict_shortcut: String,
     /// Computer-use hotkey shortcut string (optional, e.g. "Ctrl+Super+C").
     #[serde(default)]
