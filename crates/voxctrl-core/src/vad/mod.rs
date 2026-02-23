@@ -5,8 +5,6 @@ pub mod energy;
 #[cfg(feature = "vad-silero")]
 pub mod silero;
 
-use std::path::PathBuf;
-
 use crate::config::VadConfig;
 
 /// Trait for voice activity detection backends.
@@ -18,11 +16,8 @@ pub trait VoiceDetector: Send {
 }
 
 /// Create a VAD backend based on config.
-///
-/// `model_dir` is the snapshot directory resolved by the model registry.
-/// For silero, the ONNX file is at `<model_dir>/onnx/model.onnx`.
 #[allow(dead_code)]
-pub fn create_vad(cfg: &VadConfig, model_dir: Option<PathBuf>) -> anyhow::Result<Box<dyn VoiceDetector>> {
+pub fn create_vad(cfg: &VadConfig) -> anyhow::Result<Box<dyn VoiceDetector>> {
     match cfg.backend.as_str() {
         "energy" => {
             #[cfg(feature = "vad-energy")]
@@ -32,10 +27,7 @@ pub fn create_vad(cfg: &VadConfig, model_dir: Option<PathBuf>) -> anyhow::Result
         }
         "silero" => {
             #[cfg(feature = "vad-silero")]
-            {
-                let model_path = model_dir.map(|d| d.join("onnx/model.onnx"));
-                return Ok(Box::new(silero::SileroVad::new(cfg.silero_threshold, model_path)?));
-            }
+            return Ok(Box::new(silero::SileroVad::new(cfg.silero_threshold, None)?));
             #[cfg(not(feature = "vad-silero"))]
             anyhow::bail!("vad-silero feature not compiled in");
         }
