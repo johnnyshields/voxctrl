@@ -1539,12 +1539,27 @@ impl SettingsApp {
         self.test.stt_result.clear();
         self.test.stt_start_time = Some(std::time::Instant::now());
 
-        // Send the original WAV file directly — preserves the correct sample rate.
-        let wav_data = match std::fs::read(&path) {
-            Ok(d) => d,
+        // Read WAV with hound to extract f32 PCM samples + sample rate.
+        let reader = match hound::WavReader::open(&path) {
+            Ok(r) => r,
             Err(e) => {
                 self.test.stt_status = format!("Load error: {e}");
                 return;
+            }
+        };
+        let spec = reader.spec();
+        let sample_rate = spec.sample_rate;
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Int => {
+                reader.into_samples::<i16>()
+                    .filter_map(|s| s.ok())
+                    .map(|s| s as f32 / 32768.0)
+                    .collect()
+            }
+            hound::SampleFormat::Float => {
+                reader.into_samples::<f32>()
+                    .filter_map(|s| s.ok())
+                    .collect()
             }
         };
 
@@ -1562,9 +1577,16 @@ impl SettingsApp {
         self.test.stt_timing_slot = Some(timing_slot);
 
         std::thread::spawn(move || {
-            match transcribe_wav_data(&wav_data, &stt_cfg) {
-                Ok((text, timing)) => {
-                    *timing_writer.lock().unwrap() = Some(timing);
+            let total_start = std::time::Instant::now();
+            match transcribe_pcm_via_server_or_direct(&samples, sample_rate, &stt_cfg) {
+                Ok((text, method)) => {
+                    let total_secs = total_start.elapsed().as_secs_f64();
+                    *timing_writer.lock().unwrap() = Some(SttTiming {
+                        total_secs,
+                        wav_encode_secs: 0.0,
+                        transcribe_secs: total_secs,
+                        method,
+                    });
                     *result_writer.lock().unwrap() = Some(text);
                     *status_writer.lock().unwrap() = Some("Done".into());
                 }
@@ -1757,8 +1779,6 @@ fn transcribe_chunks(
     stt_cfg: &config::SttConfig,
 ) -> anyhow::Result<(String, SttTiming)> {
     let total_start = std::time::Instant::now();
-
-    // Log audio stats before writing WAV
     let (cmin, cmax) = chunks.iter().fold((f32::MAX, f32::MIN), |(mn, mx), &v| (mn.min(v), mx.max(v)));
     let cmean: f64 = chunks.iter().map(|&v| v as f64).sum::<f64>() / chunks.len().max(1) as f64;
     let rms: f64 = (chunks.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / chunks.len().max(1) as f64).sqrt();
@@ -1768,50 +1788,8 @@ fn transcribe_chunks(
         cmin, cmax, cmean, rms
     );
 
-    let wav_start = std::time::Instant::now();
-
-    let tmp = tempfile::Builder::new()
-        .suffix(".wav")
-        .tempfile()?;
-
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-
-    let mut writer = hound::WavWriter::create(tmp.path(), spec)?;
-    for &sample in chunks {
-        let s16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
-        writer.write_sample(s16)?;
-    }
-    writer.finalize()?;
-
-    let wav_size = std::fs::metadata(tmp.path()).map(|m| m.len()).unwrap_or(0);
-    let wav_encode_secs = wav_start.elapsed().as_secs_f64();
-    log::info!("[testbed] WAV written: {:?}, {} bytes, encode={:.3}s", tmp.path(), wav_size, wav_encode_secs);
-
-    let wav_data = std::fs::read(tmp.path())?;
-
     let transcribe_start = std::time::Instant::now();
-    let (text, method) = transcribe_via_server_or_direct(&wav_data, stt_cfg)?;
-    let transcribe_secs = transcribe_start.elapsed().as_secs_f64();
-    let total_secs = total_start.elapsed().as_secs_f64();
-
-    Ok((text, SttTiming { total_secs, wav_encode_secs, transcribe_secs, method }))
-}
-
-/// Transcribe from raw WAV bytes (e.g. loaded from a file).
-fn transcribe_wav_data(
-    wav_data: &[u8],
-    stt_cfg: &config::SttConfig,
-) -> anyhow::Result<(String, SttTiming)> {
-    let total_start = std::time::Instant::now();
-    log::info!("[testbed] transcribe_wav_data: {} bytes", wav_data.len());
-
-    let transcribe_start = std::time::Instant::now();
-    let (text, method) = transcribe_via_server_or_direct(wav_data, stt_cfg)?;
+    let (text, method) = transcribe_pcm_via_server_or_direct(chunks, sample_rate, stt_cfg)?;
     let transcribe_secs = transcribe_start.elapsed().as_secs_f64();
     let total_secs = total_start.elapsed().as_secs_f64();
 
@@ -1820,22 +1798,21 @@ fn transcribe_wav_data(
 
 /// Try the named-pipe STT server first; fall back to a local transcriber.
 /// Returns `(text, method)` where method is `"server"` or `"direct"`.
-fn transcribe_via_server_or_direct(
-    wav_data: &[u8],
+fn transcribe_pcm_via_server_or_direct(
+    samples: &[f32],
+    sample_rate: u32,
     stt_cfg: &config::SttConfig,
 ) -> anyhow::Result<(String, String)> {
     log::info!("[testbed] Trying STT via named-pipe server...");
-    match voxctrl_core::stt_client::transcribe_via_server(wav_data) {
+    match voxctrl_core::stt_client::transcribe_pcm_via_server(samples, sample_rate) {
         Ok(text) => {
             log::info!("[testbed] Server transcription OK: {:?}", text);
             Ok((text, "server".into()))
         }
         Err(server_err) => {
             log::warn!("[testbed] Server unavailable ({server_err:#}), trying direct transcriber...");
-            let tmp = tempfile::Builder::new().suffix(".wav").tempfile()?;
-            std::fs::write(tmp.path(), wav_data)?;
             let transcriber = voxctrl_core::stt::create_transcriber(stt_cfg, None, Some(&voxctrl_stt::stt_factory))?;
-            let result = transcriber.transcribe(tmp.path());
+            let result = transcriber.transcribe_pcm(samples, sample_rate);
             match &result {
                 Ok(text) => log::info!("[testbed] Direct transcription OK: {:?}", text),
                 Err(e) => log::error!("[testbed] Direct transcription failed: {e:#}"),
