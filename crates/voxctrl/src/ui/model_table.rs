@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -9,6 +9,11 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use voxctrl_core::config::{self, GpuBackend};
 use voxctrl_core::models::{DownloadStatus, ModelCategory, ModelRegistry};
 use voxctrl_core::models::catalog::ModelInfo;
+
+/// Duration to show the green "Saved" flash after a config section changes.
+const FLASH_DURATION: Duration = Duration::from_millis(1500);
+/// Same value as fractional seconds, for the alpha fade calculation.
+const FLASH_DURATION_SECS: f32 = FLASH_DURATION.as_millis() as f32 / 1000.0;
 
 // ── Option tables for combo boxes ─────────────────────────────────────────
 
@@ -775,7 +780,7 @@ impl eframe::App for SettingsApp {
         }
 
         // Expire old flashes
-        self.section_flash.retain(|_, t| t.elapsed() < std::time::Duration::from_millis(1500));
+        self.section_flash.retain(|_, t| t.elapsed() < FLASH_DURATION);
 
         let has_download = {
             let reg = self.registry.lock().unwrap();
@@ -812,7 +817,7 @@ impl SettingsApp {
             ui.strong(label);
             if let Some(&t) = self.section_flash.get(label) {
                 let elapsed = t.elapsed().as_secs_f32();
-                let alpha = ((1.0 - elapsed / 1.5) * 255.0).clamp(0.0, 255.0) as u8;
+                let alpha = ((1.0 - elapsed / FLASH_DURATION_SECS) * 255.0).clamp(0.0, 255.0) as u8;
                 if alpha > 0 {
                     ui.colored_label(
                         egui::Color32::from_rgba_unmultiplied(0, 200, 0, alpha),
@@ -2399,4 +2404,72 @@ fn abbreviate_path(path: &std::path::Path) -> String {
     }
     let tail: PathBuf = components[components.len() - 2..].iter().collect();
     format!("\u{2026}/{}", tail.display().to_string().replace('\\', "/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            selected_device: "DJI".into(),
+            hotkey_dict_shortcut: "Ctrl+Super+Space".into(),
+            hotkey_cu_shortcut: String::new(),
+            stt_backend: "voxtral-http".into(),
+            whisper_model: "small".into(),
+            vad_backend: "energy".into(),
+            gpu_backend: GpuBackend::Auto,
+            cu_provider_type: "anthropic".into(),
+            cu_model: String::new(),
+            cu_api_base_url: String::new(),
+            cu_max_iterations: String::new(),
+            cu_max_tree_depth: String::new(),
+            cu_include_screenshots: false,
+        }
+    }
+
+    #[test]
+    fn identical_snapshots_yield_no_changes() {
+        let a = default_snapshot();
+        let b = default_snapshot();
+        assert!(a.changed_sections(&b).is_empty());
+    }
+
+    #[test]
+    fn single_field_change_returns_correct_section() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.stt_backend = "whisper-cpp".into();
+        assert_eq!(a.changed_sections(&b), vec!["Speech-to-Text"]);
+    }
+
+    #[test]
+    fn multiple_section_changes_returns_all() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.selected_device = "Rode".into();
+        b.vad_backend = "silero".into();
+        b.gpu_backend = GpuBackend::Cuda;
+        let sections = a.changed_sections(&b);
+        assert!(sections.contains(&"Input"));
+        assert!(sections.contains(&"Voice Activity Detection"));
+        assert!(sections.contains(&"GPU / Acceleration"));
+        assert_eq!(sections.len(), 3);
+    }
+
+    #[test]
+    fn hotkey_change_returns_hotkeys_section() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.hotkey_dict_shortcut = "Ctrl+Alt+D".into();
+        assert_eq!(a.changed_sections(&b), vec!["Hotkeys"]);
+    }
+
+    #[test]
+    fn cu_field_change_returns_computer_use_section() {
+        let a = default_snapshot();
+        let mut b = default_snapshot();
+        b.cu_model = "gpt-4".into();
+        assert_eq!(a.changed_sections(&b), vec!["Computer Use"]);
+    }
 }

@@ -289,6 +289,54 @@ mod tests {
     }
 
     #[test]
+    fn shared_pipeline_concurrent_get_and_swap() {
+        use std::thread;
+
+        let sp = Arc::new(make_shared("v0"));
+        let mut handles = Vec::new();
+
+        // Spawn readers that repeatedly call get()
+        for _ in 0..4 {
+            let sp = sp.clone();
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    let snap = sp.get();
+                    // get() must always return a valid pipeline
+                    assert!(!snap.stt.name().is_empty());
+                }
+            }));
+        }
+
+        // Spawn writers that repeatedly call swap()
+        for i in 0..2 {
+            let sp = sp.clone();
+            handles.push(thread::spawn(move || {
+                for j in 0..50 {
+                    sp.swap(Pipeline {
+                        stt: Box::new(MockTranscriber {
+                            response: format!("w{i}-{j}"),
+                        }),
+                        router: Box::new(MockRouter {
+                            routed: Arc::new(Mutex::new(vec![])),
+                        }),
+                        action: Box::new(MockAction {
+                            executed: Arc::new(Mutex::new(vec![])),
+                        }),
+                    });
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        // After all threads finish, get() still works
+        let final_snap = sp.get();
+        assert!(!final_snap.stt.name().is_empty());
+    }
+
+    #[test]
     fn shared_pipeline_inflight_survives_swap() {
         let sp = Arc::new(make_shared("original"));
         let snapshot = sp.get();

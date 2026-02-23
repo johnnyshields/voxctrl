@@ -465,6 +465,27 @@ mod tests {
     }
 
     #[test]
+    fn test_two_defaults_are_equal() {
+        assert_eq!(Config::default(), Config::default());
+    }
+
+    #[test]
+    fn test_single_field_change_makes_unequal() {
+        let a = Config::default();
+        let mut b = Config::default();
+        b.stt.backend = "whisper-cpp".into();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_config_roundtrip_preserves_equality() {
+        let original = Config::default();
+        let json = serde_json::to_string_pretty(&original).unwrap();
+        let parsed: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, parsed);
+    }
+
+    #[test]
     fn test_action_config_roundtrip() {
         let action = ActionConfig {
             backend: "computer-use".into(),

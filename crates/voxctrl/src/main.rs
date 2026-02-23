@@ -15,7 +15,7 @@ mod tui;
 mod ui;
 
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 
@@ -83,6 +83,9 @@ fn run_gui(
     use winit::application::ApplicationHandler;
     use winit::event::WindowEvent;
     use winit::event_loop::{ActiveEventLoop, EventLoop};
+
+    /// How often to poll config.json mtime for hot-reload.
+    const CONFIG_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
     struct App {
         state: Arc<SharedState>,
@@ -251,14 +254,31 @@ fn run_gui(
                 self.apply_config_changes(new_cfg);
             }
 
-            // Poll config.json mtime every 500ms for hot-reload
-            if self.last_config_check.elapsed() >= std::time::Duration::from_millis(500) {
+            // Poll config.json mtime for hot-reload
+            if self.last_config_check.elapsed() >= CONFIG_POLL_INTERVAL {
                 self.last_config_check = Instant::now();
                 let current_mtime = config::config_mtime();
                 if current_mtime != self.config_mtime {
                     self.config_mtime = current_mtime;
                     let new_cfg = config::load_config();
-                    if new_cfg != self.cfg {
+                    // Guard: if the file exists with content but parsed as
+                    // defaults, it's likely a transient JSON error — skip.
+                    let skip = if new_cfg == config::Config::default() {
+                        let path = config::config_path();
+                        let has_content = std::fs::metadata(&path)
+                            .map(|m| m.len() > 0)
+                            .unwrap_or(false);
+                        if has_content {
+                            log::warn!(
+                                "Config file changed but parsed as defaults — \
+                                 skipping (possible transient parse error)"
+                            );
+                        }
+                        has_content
+                    } else {
+                        false
+                    };
+                    if !skip && new_cfg != self.cfg {
                         log::info!("Config file changed — applying updates");
                         self.apply_config_changes(new_cfg);
                     }
