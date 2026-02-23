@@ -92,6 +92,9 @@ pub struct ActionConfig {
     /// Include screenshots in agent context (default: false).
     #[serde(default)]
     pub cu_include_screenshots: Option<bool>,
+    /// Computer-use provider type (default: "anthropic").
+    #[serde(default = "default_cu_provider_type")]
+    pub cu_provider_type: String,
 }
 
 impl Default for ActionConfig {
@@ -103,6 +106,7 @@ impl Default for ActionConfig {
             cu_max_iterations: None,
             cu_max_tree_depth: None,
             cu_include_screenshots: None,
+            cu_provider_type: default_cu_provider_type(),
         }
     }
 }
@@ -199,6 +203,7 @@ fn default_energy_threshold() -> f64 { 0.015 }
 fn default_silero_threshold() -> f32 { 0.5 }
 fn default_router_backend() -> String { "passthrough".into() }
 fn default_action_backend() -> String { "type-text".into() }
+fn default_cu_provider_type() -> String { "anthropic".into() }
 fn default_hotkey_shortcut() -> String { "Ctrl+Super+Space".into() }
 fn default_device_pattern() -> String { "DJI".into() }
 fn default_sample_rate() -> u32 { 16000 }
