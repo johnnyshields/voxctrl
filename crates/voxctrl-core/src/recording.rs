@@ -7,6 +7,12 @@ use crate::pipeline::Pipeline;
 use crate::{AppStatus, SharedState};
 
 /// Toggle the recording state: Idle → Recording → Transcribing → (back to Idle).
+///
+/// - **Idle → Recording**: clears buffered chunks, sets status to Recording.
+/// - **Recording → Transcribing → Idle**: drains chunks, spawns a transcription
+///   thread (or returns to Idle immediately if no audio was captured).
+/// - **Transcribing → (ignored)**: toggle is a no-op while a transcription is
+///   already in flight.
 pub fn toggle_recording(
     state: &Arc<SharedState>,
     cfg: &Config,
@@ -46,6 +52,118 @@ pub fn toggle_recording(
         AppStatus::Transcribing => {
             log::debug!("Ignoring toggle — already transcribing");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use crate::action::ActionExecutor;
+    use crate::router::{Intent, IntentRouter};
+    use crate::stt::Transcriber;
+
+    struct StubTranscriber;
+    impl Transcriber for StubTranscriber {
+        fn transcribe(&self, _: &std::path::Path) -> anyhow::Result<String> { Ok(String::new()) }
+        fn transcribe_pcm(&self, _: &[f32], _: u32) -> anyhow::Result<String> { Ok("ok".into()) }
+        fn name(&self) -> &str { "stub" }
+        fn is_available(&self) -> bool { true }
+    }
+
+    struct StubRouter;
+    impl IntentRouter for StubRouter {
+        fn route(&self, text: &str) -> anyhow::Result<Intent> { Ok(Intent::Dictate(text.into())) }
+        fn name(&self) -> &str { "stub" }
+    }
+
+    struct StubAction {
+        executed: Arc<Mutex<Vec<String>>>,
+    }
+    impl ActionExecutor for StubAction {
+        fn execute(&self, intent: &Intent) -> anyhow::Result<()> {
+            if let Intent::Dictate(t) = intent {
+                self.executed.lock().unwrap().push(t.clone());
+            }
+            Ok(())
+        }
+        fn name(&self) -> &str { "stub" }
+    }
+
+    fn make_pipeline() -> (Arc<Pipeline>, Arc<Mutex<Vec<String>>>) {
+        let executed = Arc::new(Mutex::new(vec![]));
+        let pipeline = Arc::new(Pipeline {
+            stt: Box::new(StubTranscriber),
+            router: Box::new(StubRouter),
+            action: Box::new(StubAction { executed: executed.clone() }),
+        });
+        (pipeline, executed)
+    }
+
+    #[test]
+    fn idle_to_recording() {
+        let state = Arc::new(SharedState::new());
+        let (pipeline, _) = make_pipeline();
+        let cfg = Config::default();
+
+        toggle_recording(&state, &cfg, pipeline);
+
+        assert_eq!(*state.status.lock().unwrap(), AppStatus::Recording);
+        assert!(state.chunks.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recording_with_audio_transitions_to_transcribing_then_idle() {
+        let state = Arc::new(SharedState::new());
+        let (pipeline, executed) = make_pipeline();
+        let cfg = Config::default();
+
+        // Idle → Recording
+        *state.status.lock().unwrap() = AppStatus::Recording;
+        state.chunks.lock().unwrap().extend_from_slice(&[0.1, 0.2, 0.3]);
+
+        // Recording → Transcribing (spawns thread)
+        toggle_recording(&state, &cfg, pipeline);
+
+        // Wait for the transcription thread to finish
+        for _ in 0..200 {
+            if *state.status.lock().unwrap() == AppStatus::Idle {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert_eq!(*state.status.lock().unwrap(), AppStatus::Idle);
+        assert_eq!(&*executed.lock().unwrap(), &["ok"]);
+    }
+
+    #[test]
+    fn recording_empty_audio_returns_to_idle() {
+        let state = Arc::new(SharedState::new());
+        let (pipeline, _) = make_pipeline();
+        let cfg = Config::default();
+
+        *state.status.lock().unwrap() = AppStatus::Recording;
+        // No chunks pushed — empty audio
+
+        toggle_recording(&state, &cfg, pipeline);
+
+        // Should return to Idle synchronously (no thread spawned)
+        assert_eq!(*state.status.lock().unwrap(), AppStatus::Idle);
+    }
+
+    #[test]
+    fn transcribing_ignores_toggle() {
+        let state = Arc::new(SharedState::new());
+        let (pipeline, _) = make_pipeline();
+        let cfg = Config::default();
+
+        *state.status.lock().unwrap() = AppStatus::Transcribing;
+
+        toggle_recording(&state, &cfg, pipeline);
+
+        assert_eq!(*state.status.lock().unwrap(), AppStatus::Transcribing);
     }
 }
 

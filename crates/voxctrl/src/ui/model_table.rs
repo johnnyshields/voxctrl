@@ -417,6 +417,7 @@ pub struct SettingsApp {
     hotkey_include_super: bool,
     hotkey_cu_include_super: bool,
     // Test tab
+    dict_hotkey_toggled: bool,
     test_hotkey: Option<TestHotkeyState>,
     test_hotkey_error: Option<String>,
     test_hotkey_cu: Option<TestHotkeyState>,
@@ -529,6 +530,7 @@ pub fn run_settings_standalone() -> anyhow::Result<()> {
         hotkey_cu_include_super: cfg.hotkey.cu_shortcut.as_deref().map_or(false, |s| {
             s.to_lowercase().split('+').any(|t| matches!(t.trim(), "super" | "win" | "meta" | "cmd"))
         }),
+        dict_hotkey_toggled: false,
         test_hotkey: None,
         test_hotkey_error: None,
         test_hotkey_cu: None,
@@ -615,7 +617,10 @@ impl eframe::App for SettingsApp {
                 if let Some(ref mut state) = self.test_hotkey {
                     if event.id == state.hotkey_id {
                         state.pressed = match event.state {
-                            HotKeyState::Pressed => true,
+                            HotKeyState::Pressed => {
+                                self.dict_hotkey_toggled = true;
+                                true
+                            }
                             HotKeyState::Released => false,
                         };
                     }
@@ -1072,6 +1077,17 @@ impl SettingsApp {
 
         let cfg = config::load_config();
 
+        // ── Consume hotkey toggle set by update() ────────────────────
+        if self.dict_hotkey_toggled && !self.test.hotkey_bypass {
+            self.dict_hotkey_toggled = false;
+            let is_recording = self.test.recording.load(std::sync::atomic::Ordering::Relaxed);
+            if is_recording {
+                self.stop_recording_and_transcribe(&cfg);
+            } else {
+                self.start_test_recording(&cfg);
+            }
+        }
+
         ui.heading("Pipeline Test");
         ui.label("Test each stage of the audio pipeline.");
         ui.add_space(8.0);
@@ -1235,14 +1251,19 @@ impl SettingsApp {
                 ui.strong("4. Speech-to-Text");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let is_recording = self.test.recording.load(std::sync::atomic::Ordering::Relaxed);
+                    let hotkey_gating = !self.test.hotkey_bypass && self.test_hotkey.is_some();
                     if is_recording {
-                        if ui.button("Stop & Transcribe").clicked() {
+                        if hotkey_gating {
+                            ui.add_enabled(false, egui::Button::new("Recording... press hotkey"));
+                        } else if ui.button("Stop & Transcribe").clicked() {
                             self.stop_recording_and_transcribe(&cfg);
                         }
                     } else if self.test.stt_status == "Transcribing..." {
                         ui.add_enabled(false, egui::Button::new("Transcribing..."));
                     } else {
-                        if ui.button("Record").clicked() {
+                        if hotkey_gating {
+                            ui.add_enabled(false, egui::Button::new("Press hotkey..."));
+                        } else if ui.button("Record").clicked() {
                             self.start_test_recording(&cfg);
                         }
                         if ui.button("Load File...").clicked() {

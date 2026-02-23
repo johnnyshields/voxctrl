@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
 use voxctrl_core::config::{Config, HotkeyConfig};
 use voxctrl_core::pipeline::Pipeline;
@@ -228,6 +228,9 @@ pub fn handle_hotkey_event(
     cfg: &Config,
     pipeline: Arc<Pipeline>,
 ) {
+    if event.state != HotKeyState::Pressed {
+        return;
+    }
     if ids.dictation.map(|hk| hk.id()) == Some(event.id) {
         voxctrl_core::recording::toggle_recording(state, cfg, pipeline);
     } else if ids.computer_use.map(|hk| hk.id()) == Some(event.id) {
@@ -281,5 +284,84 @@ mod tests {
     #[test]
     fn parse_duplicate_key_errors() {
         assert!(parse_shortcut("Ctrl+A+B").is_err());
+    }
+
+    // ── handle_hotkey_event tests ────────────────────────────────────
+
+    use voxctrl_core::{AppStatus, SharedState};
+
+    fn make_test_ids() -> (HotkeyIds, u32) {
+        let hk = HotKey::new(Some(Modifiers::CONTROL), Code::Space);
+        let id = hk.id();
+        let ids = HotkeyIds { dictation: Some(hk), computer_use: None };
+        (ids, id)
+    }
+
+    fn make_test_pipeline() -> Arc<Pipeline> {
+        use std::sync::Mutex;
+        use voxctrl_core::action::ActionExecutor;
+        use voxctrl_core::router::{Intent, IntentRouter};
+        use voxctrl_core::stt::Transcriber;
+
+        struct Noop;
+        impl Transcriber for Noop {
+            fn transcribe(&self, _: &std::path::Path) -> anyhow::Result<String> { Ok(String::new()) }
+            fn transcribe_pcm(&self, _: &[f32], _: u32) -> anyhow::Result<String> { Ok(String::new()) }
+            fn name(&self) -> &str { "noop" }
+            fn is_available(&self) -> bool { true }
+        }
+        impl IntentRouter for Noop {
+            fn route(&self, t: &str) -> anyhow::Result<Intent> { Ok(Intent::Dictate(t.into())) }
+            fn name(&self) -> &str { "noop" }
+        }
+        impl ActionExecutor for Noop {
+            fn execute(&self, _: &Intent) -> anyhow::Result<()> { Ok(()) }
+            fn name(&self) -> &str { "noop" }
+        }
+
+        Arc::new(Pipeline {
+            stt: Box::new(Noop),
+            router: Box::new(Noop),
+            action: Box::new(Noop),
+        })
+    }
+
+    #[test]
+    fn pressed_event_triggers_toggle() {
+        let (ids, id) = make_test_ids();
+        let state = Arc::new(SharedState::new());
+        let cfg = voxctrl_core::config::Config::default();
+        let pipeline = make_test_pipeline();
+
+        let event = GlobalHotKeyEvent { id, state: HotKeyState::Pressed };
+        handle_hotkey_event(&event, &ids, &state, &cfg, pipeline);
+
+        assert_eq!(*state.status.lock().unwrap(), AppStatus::Recording);
+    }
+
+    #[test]
+    fn released_event_is_ignored() {
+        let (ids, id) = make_test_ids();
+        let state = Arc::new(SharedState::new());
+        let cfg = voxctrl_core::config::Config::default();
+        let pipeline = make_test_pipeline();
+
+        let event = GlobalHotKeyEvent { id, state: HotKeyState::Released };
+        handle_hotkey_event(&event, &ids, &state, &cfg, pipeline);
+
+        assert_eq!(*state.status.lock().unwrap(), AppStatus::Idle);
+    }
+
+    #[test]
+    fn unrelated_hotkey_id_is_ignored() {
+        let (ids, _) = make_test_ids();
+        let state = Arc::new(SharedState::new());
+        let cfg = voxctrl_core::config::Config::default();
+        let pipeline = make_test_pipeline();
+
+        let unrelated = GlobalHotKeyEvent { id: 99999, state: HotKeyState::Pressed };
+        handle_hotkey_event(&unrelated, &ids, &state, &cfg, pipeline);
+
+        assert_eq!(*state.status.lock().unwrap(), AppStatus::Idle);
     }
 }
