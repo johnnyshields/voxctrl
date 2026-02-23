@@ -232,6 +232,45 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Build the action factory that chains platform-specific computer-use providers.
+///
+/// Returns None if no cu-* features are enabled (action module falls back to core builtins).
+#[cfg(any(feature = "cu-windows", feature = "cu-macos", feature = "cu-linux"))]
+fn build_action_factory() -> Option<Box<voxctrl_core::action::ActionFactory>> {
+    // Collect available platform provider factories
+    let mut providers: Vec<Box<dyn Fn(&voxctrl_core::config::ActionConfig) -> Option<anyhow::Result<Box<dyn voxctrl_cu::AccessibilityProvider>>> + Send + Sync>> = Vec::new();
+
+    #[cfg(feature = "cu-windows")]
+    providers.push(Box::new(voxctrl_cu_windows::windows_provider_factory));
+
+    #[cfg(feature = "cu-macos")]
+    providers.push(Box::new(voxctrl_cu_macos::macos_provider_factory));
+
+    #[cfg(feature = "cu-linux")]
+    providers.push(Box::new(voxctrl_cu_linux::linux_provider_factory));
+
+    if providers.is_empty() {
+        return None;
+    }
+
+    // Build a combined provider factory that tries each platform in order
+    let provider_factory = move |cfg: &voxctrl_core::config::ActionConfig| -> Option<anyhow::Result<Box<dyn voxctrl_cu::AccessibilityProvider>>> {
+        for factory in &providers {
+            if let Some(result) = factory(cfg) {
+                return Some(result);
+            }
+        }
+        None
+    };
+
+    Some(voxctrl_cu::action_factory(Box::new(provider_factory)))
+}
+
+#[cfg(not(any(feature = "cu-windows", feature = "cu-macos", feature = "cu-linux")))]
+fn build_action_factory() -> Option<Box<voxctrl_core::action::ActionFactory>> {
+    None
+}
+
 fn run() -> Result<()> {
     log::info!("─── voxctrl v{} starting ───", env!("CARGO_PKG_VERSION"));
 
@@ -261,11 +300,15 @@ fn run() -> Result<()> {
     let registry = Arc::new(Mutex::new(registry));
     let state = Arc::new(SharedState::new());
 
+    // Build action factory chain (computer-use providers, feature-gated)
+    let action_factory = build_action_factory();
+
     log::info!("Creating pipeline...");
     let pipeline = Arc::new(pipeline::Pipeline::from_config(
         &cfg,
         stt_model_dir,
         Some(&voxctrl_stt::stt_factory),
+        action_factory.as_deref(),
     )?);
     log::info!("Pipeline created");
 

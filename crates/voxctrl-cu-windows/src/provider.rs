@@ -1,0 +1,196 @@
+//! Windows UI Automation accessibility provider.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use anyhow::{Context, Result};
+use uiautomation::types::TreeScope;
+use uiautomation::UIAutomation;
+use uiautomation::UIElement;
+
+use voxctrl_cu::actions::{UiAction, UiActionResult};
+use voxctrl_cu::tree::{UiNode, UiTree};
+use voxctrl_cu::AccessibilityProvider;
+
+use crate::actions::execute_action;
+use crate::tree_walker::walk_element;
+
+/// Maximum tree depth to walk (prevents runaway recursion on deep UIs).
+const MAX_WALK_DEPTH: usize = 25;
+
+/// Windows UI Automation provider.
+///
+/// Stores a map from element index → UIA element handle so that actions
+/// can look up elements by the index the LLM references.
+pub struct WindowsUiaProvider {
+    element_map: Mutex<HashMap<usize, UIElement>>,
+}
+
+impl WindowsUiaProvider {
+    pub fn new() -> Result<Self> {
+        // Verify UIA is available by creating an instance.
+        let _uia = UIAutomation::new().context("Failed to initialize UI Automation")?;
+        Ok(Self {
+            element_map: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Replace the stored element map with a new one.
+    fn store_element_map(&self, map: HashMap<usize, UIElement>) {
+        let mut guard = self.element_map.lock().unwrap();
+        *guard = map;
+    }
+}
+
+impl AccessibilityProvider for WindowsUiaProvider {
+    fn get_focused_tree(&self) -> Result<UiTree> {
+        let uia = UIAutomation::new().context("UI Automation init")?;
+        let focused = uia.get_focused_element().context("get focused element")?;
+
+        // Walk up to the top-level window.
+        let walker = uia.get_control_view_walker().context("get tree walker")?;
+        let mut current = focused.clone();
+        loop {
+            match walker.get_parent(&current) {
+                Ok(parent) => {
+                    // The desktop root has no name and HWND 0 — stop there.
+                    if parent == uia.get_root_element().unwrap_or(parent.clone()) {
+                        break;
+                    }
+                    current = parent;
+                }
+                Err(_) => break,
+            }
+        }
+
+        let window = current;
+        let window_title = window.get_name().unwrap_or_default();
+        let pid = window.get_process_id().unwrap_or(0);
+        let process_name = process_name_from_pid(pid);
+
+        let mut index_counter = 0usize;
+        let mut element_map = HashMap::new();
+        let root = walk_element(
+            &uia,
+            &window,
+            0,
+            MAX_WALK_DEPTH,
+            &mut index_counter,
+            &mut element_map,
+        );
+
+        let element_count = index_counter;
+        self.store_element_map(element_map);
+
+        Ok(UiTree {
+            root,
+            window_title,
+            process_name,
+            element_count,
+        })
+    }
+
+    fn get_tree_for_pid(&self, pid: u32) -> Result<UiTree> {
+        let uia = UIAutomation::new().context("UI Automation init")?;
+        let root = uia.get_root_element().context("get desktop root")?;
+
+        // Find windows belonging to this PID.
+        let condition = uia
+            .create_property_condition(
+                uiautomation::types::UIProperty::ProcessId,
+                uiautomation::variants::Variant::from(pid as i32),
+                None,
+            )
+            .context("create PID condition")?;
+        let windows = root
+            .find_all(TreeScope::Children, &condition)
+            .context("find windows by PID")?;
+
+        let window = windows
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("No window found for PID {pid}"))?;
+
+        let window_title = window.get_name().unwrap_or_default();
+        let process_name = process_name_from_pid(pid);
+
+        let mut index_counter = 0usize;
+        let mut element_map = HashMap::new();
+        let root_node = walk_element(
+            &uia,
+            &window,
+            0,
+            MAX_WALK_DEPTH,
+            &mut index_counter,
+            &mut element_map,
+        );
+
+        let element_count = index_counter;
+        self.store_element_map(element_map);
+
+        Ok(UiTree {
+            root: root_node,
+            window_title,
+            process_name,
+            element_count,
+        })
+    }
+
+    fn find_elements(&self, query: &str) -> Result<Vec<UiNode>> {
+        let uia = UIAutomation::new().context("UI Automation init")?;
+        let root = uia.get_root_element().context("get desktop root")?;
+
+        let condition = uia
+            .create_property_condition(
+                uiautomation::types::UIProperty::Name,
+                uiautomation::variants::Variant::from(query),
+                None,
+            )
+            .context("create name condition")?;
+
+        let elements = root
+            .find_all(TreeScope::Descendants, &condition)
+            .unwrap_or_default();
+
+        let mut results = Vec::new();
+        let mut index_counter = 0usize;
+        let mut element_map = HashMap::new();
+
+        for elem in elements.iter().take(50) {
+            let node = walk_element(&uia, elem, 0, 0, &mut index_counter, &mut element_map);
+            results.push(node);
+        }
+
+        self.store_element_map(element_map);
+        Ok(results)
+    }
+
+    fn perform_action(&self, action: &UiAction) -> Result<UiActionResult> {
+        let guard = self.element_map.lock().unwrap();
+        execute_action(action, &guard)
+    }
+
+    fn capture_screenshot(&self) -> Result<Option<Vec<u8>>> {
+        crate::screenshot::capture_screen()
+    }
+
+    fn platform_name(&self) -> &str {
+        "windows-uia"
+    }
+}
+
+/// Best-effort process name lookup from PID.
+fn process_name_from_pid(pid: u32) -> String {
+    if pid == 0 {
+        return String::new();
+    }
+    // Read from /proc on WSL or use Windows API — simplified for now.
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| format!("pid:{pid}"))
+}
+
+// Safety: UIAutomation COM objects are apartment-threaded but we access them
+// from the thread that created them. The Mutex serialises access.
+unsafe impl Send for WindowsUiaProvider {}
+unsafe impl Sync for WindowsUiaProvider {}
