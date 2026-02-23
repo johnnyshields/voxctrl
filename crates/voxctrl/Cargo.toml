@@ -5,7 +5,7 @@ edition = "2021"
 description = "Pluggable voice-to-action pipeline — mic → VAD → STT → router → action"
 
 [features]
-default = ["stt-voxtral-http", "stt-voxtral-native", "stt-whisper-native", "vad-energy", "gui", "tui"]
+default = ["stt-voxtral-http", "stt-voxtral-native", "stt-whisper-native", "vad-energy", "gui", "tui", "zluda"]
 
 # STT backends — forwarded to sub-crates
 stt-voxtral-http    = ["voxctrl-core/stt-voxtral-http"]
@@ -27,6 +27,7 @@ cu-linux   = ["dep:voxctrl-cu", "dep:voxctrl-cu-linux"]
 
 # GPU acceleration (opt-in, cross-cutting)
 cuda = ["voxctrl-core/cuda", "voxctrl-stt/cuda"]
+zluda = ["voxctrl-core/zluda"]
 
 # Model manager consent dialog — forwarded to core
 consent-dialog = ["voxctrl-core/consent-dialog"]
