@@ -1,7 +1,7 @@
 //! Silero VAD — neural voice activity detection via ONNX Runtime.
 //!
-//! Uses the Silero VAD v4 ONNX model. Download from:
-//! <https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx>
+//! Uses the Silero VAD v5 ONNX model. Download from:
+//! <https://huggingface.co/onnx-community/silero-vad/resolve/main/onnx/model.onnx>
 //!
 //! Place the file at `silero_vad.onnx` next to the binary, or set the
 //! `SILERO_VAD_MODEL` environment variable to the full path.

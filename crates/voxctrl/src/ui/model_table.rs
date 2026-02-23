@@ -2052,7 +2052,7 @@ fn download_model_files(
         out.flush()?;
 
         // Validate: model files should be at least 1 KB (HTML error pages are small)
-        if file_bytes < 1024 && filename.ends_with(".safetensors") {
+        if file_bytes < 1024 && (filename.ends_with(".safetensors") || filename.ends_with(".onnx")) {
             let _ = std::fs::remove_file(&dest);
             anyhow::bail!(
                 "Downloaded {filename} is only {file_bytes} bytes — likely an error page, not model data. \

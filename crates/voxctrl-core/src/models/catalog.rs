@@ -94,8 +94,8 @@ pub fn all_models() -> Vec<ModelInfo> {
             display_name: "Silero VAD v5".into(),
             backend: ModelBackend::Voxtral,
             category: ModelCategory::Vad,
-            hf_repo: Some("snakers4/silero-vad".into()),
-            hf_files: vec!["silero_vad.onnx".into()],
+            hf_repo: Some("onnx-community/silero-vad".into()),
+            hf_files: vec!["onnx/model.onnx".into()],
             approx_size_bytes: 2 * MB,
         },
     ]
