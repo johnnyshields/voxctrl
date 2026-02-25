@@ -8425,7 +8425,7 @@ dependencies = [
 [[package]]
 name = "voxtral-mini-realtime"
 version = "0.2.0"
-source = "git+https://github.com/johnnyshields/voxtral-mini-realtime-rs#11f093d748eaeed5c29fa8668d3da10143a5cf07"
+source = "git+https://github.com/johnnyshields/voxtral-mini-realtime-rs?rev=a1218a8#a1218a8205fb5b1a57fd311097cf81cf23fa40bb"
 dependencies = [
  "anyhow",
  "audioadapter-buffers",
@@ -8437,6 +8437,7 @@ dependencies = [
  "half",
  "hf-hub 0.4.3",
  "hound",
+ "memmap2 0.9.10",
  "ndarray 0.16.1",
  "ndarray-npy",
  "num-complex",
