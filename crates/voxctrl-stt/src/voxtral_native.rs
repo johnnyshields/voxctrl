@@ -20,7 +20,7 @@ use voxtral_mini_realtime::tokenizer::VoxtralTokenizer;
 
 use voxctrl_core::stt::Transcriber;
 
-type Backend = burn::backend::NdArray;
+type Backend = burn::backend::Wgpu;
 
 /// Decoder model dimension (d_model for Voxtral Mini 4B).
 const DECODER_DIM: usize = 3072;
