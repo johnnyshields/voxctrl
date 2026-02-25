@@ -1944,7 +1944,13 @@ impl SettingsApp {
                     };
                     ui.label(display);
                     if ui.small_button("Browse\u{2026}").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                        let mut dialog = rfd::FileDialog::new();
+                        if let Some(ref dir) = self.models_directory {
+                            if dir.is_dir() {
+                                dialog = dialog.set_directory(dir);
+                            }
+                        }
+                        if let Some(path) = dialog.pick_folder() {
                             self.models_directory = Some(path);
                         }
                     }
@@ -2015,7 +2021,7 @@ impl SettingsApp {
                 ui.strong("Size");
                 ui.strong("Status");
                 ui.strong("Action");
-                ui.strong("Local Path");
+                ui.strong("Path");
                 ui.end_row();
 
                 for entry in &filtered {
@@ -2071,14 +2077,12 @@ impl SettingsApp {
                         }
                     }
 
-                    // Local Path column
+                    // Path column — show full directory path
                     ui.horizontal(|ui| {
                         if let Some(override_path) = self.model_paths.get(&entry.id) {
-                            let display = abbreviate_path(override_path);
-                            ui.label(display).on_hover_text(override_path.display().to_string());
+                            ui.label(override_path.display().to_string());
                         } else if let DownloadStatus::Downloaded { ref path, .. } = entry.status {
-                            let display = abbreviate_path(path);
-                            ui.label(display).on_hover_text(path.display().to_string());
+                            ui.label(path.display().to_string());
                         } else {
                             ui.label("\u{2014}"); // em-dash
                         }
@@ -2101,7 +2105,13 @@ impl SettingsApp {
 
         // Handle deferred folder picker (outside grid / lock scope)
         if let Some(model_id) = browse_model_id {
-            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+            let mut dialog = rfd::FileDialog::new();
+            if let Some(ref dir) = self.models_directory {
+                if dir.is_dir() {
+                    dialog = dialog.set_directory(dir);
+                }
+            }
+            if let Some(path) = dialog.pick_folder() {
                 self.model_paths.insert(model_id, path);
             }
         }
@@ -2121,7 +2131,7 @@ impl SettingsApp {
                         reg.get(&model_id).map(|e| e.info.clone())
                     };
                     if let Some(info) = info {
-                        spawn_download(info, Arc::clone(&self.registry));
+                        spawn_download(info, Arc::clone(&self.registry), self.models_directory.clone());
                     }
                 }
                 Action::Delete(model_id) => do_delete(&model_id, &self.registry),
@@ -2147,7 +2157,7 @@ enum Action {
 }
 
 /// Spawn a background thread to download a model's files from HuggingFace.
-fn spawn_download(info: ModelInfo, registry: Arc<Mutex<ModelRegistry>>) {
+fn spawn_download(info: ModelInfo, registry: Arc<Mutex<ModelRegistry>>, models_directory: Option<PathBuf>) {
     let repo = match &info.hf_repo {
         Some(r) => r.clone(),
         None => {
@@ -2165,7 +2175,7 @@ fn spawn_download(info: ModelInfo, registry: Arc<Mutex<ModelRegistry>>) {
     }
 
     std::thread::spawn(move || {
-        if let Err(e) = download_model_files(&info, &repo, &registry) {
+        if let Err(e) = download_model_files(&info, &repo, &registry, models_directory.as_deref()) {
             log::error!("Download failed for '{}': {e}", info.id);
             if let Some(entry) = registry.lock().unwrap().get_mut(&info.id) {
                 entry.status = DownloadStatus::Error(format!("{e}"));
@@ -2385,6 +2395,81 @@ fn download_single_file(
     );
 }
 
+/// Weight-file extensions — files with these extensions are only downloaded if
+/// explicitly listed in `hf_files` (prevents duplicate format downloads).
+const WEIGHT_EXTENSIONS: &[&str] = &[
+    ".safetensors", ".bin", ".pt", ".pth", ".h5", ".msgpack", ".onnx", ".gguf", ".ggml",
+];
+
+/// Repo metadata files that are never useful locally.
+const SKIP_FILES: &[&str] = &[
+    ".gitattributes", "README.md", "LICENSE", "LICENSE.md", "LICENSE.txt", "NOTICE",
+];
+
+/// Query the HuggingFace API for the list of files in a repo.
+/// Returns `None` on any failure (network, parse, etc.) so callers can fall back.
+fn query_hf_repo_files(repo: &str, token: &Option<String>) -> Option<Vec<String>> {
+    let url = format!("https://huggingface.co/api/models/{repo}");
+    let mut req = ureq::get(&url).set("User-Agent", "voxctrl");
+    if let Some(ref tok) = token {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    let resp: serde_json::Value = match req.call() {
+        Ok(r) => match r.into_json() {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to parse HF API response for {repo}: {e}");
+                return None;
+            }
+        },
+        Err(e) => {
+            log::warn!("HF API request failed for {repo}: {e}");
+            return None;
+        }
+    };
+
+    let siblings = resp.get("siblings")?.as_array()?;
+    let files: Vec<String> = siblings
+        .iter()
+        .filter_map(|s| s.get("rfilename")?.as_str().map(String::from))
+        .collect();
+    if files.is_empty() { None } else { Some(files) }
+}
+
+/// Build the full download list: explicit weight files from `hf_files` plus
+/// auto-discovered config files from the HF API. Skips duplicate weight
+/// formats and repo metadata.
+fn build_download_list(hf_files: &[String], repo: &str, token: &Option<String>) -> Vec<String> {
+    let api_files = match query_hf_repo_files(repo, token) {
+        Some(f) => f,
+        None => {
+            log::info!("HF API unavailable for {repo}, using explicit file list only");
+            return hf_files.to_vec();
+        }
+    };
+
+    let mut result: Vec<String> = hf_files.to_vec();
+
+    for file in &api_files {
+        // Already in the explicit list
+        if hf_files.iter().any(|f| f == file) {
+            continue;
+        }
+        // Skip repo metadata
+        if SKIP_FILES.iter().any(|s| file.ends_with(s)) {
+            continue;
+        }
+        // Skip weight files not explicitly listed (avoids duplicate formats)
+        if WEIGHT_EXTENSIONS.iter().any(|ext| file.ends_with(ext)) {
+            continue;
+        }
+        result.push(file.clone());
+    }
+
+    log::info!("Download list for {repo}: {result:?}");
+    result
+}
+
 /// Download all files for a model from HuggingFace Hub.
 ///
 /// Downloads to `.partial` files and renames on success, so incomplete downloads
@@ -2394,20 +2479,26 @@ fn download_model_files(
     info: &ModelInfo,
     repo: &str,
     registry: &Arc<Mutex<ModelRegistry>>,
+    models_directory: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     const UPDATE_INTERVAL: u64 = 256 * 1024; // update UI every 256 KB
 
     let token = hf_token();
 
-    let cache_dir = voxctrl_core::models::cache_scanner::effective_cache_dir()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine HF cache directory"))?;
-
-    // HF Hub cache layout: models--{org}--{name}/snapshots/main/
-    let model_dir_name = format!("models--{}", repo.replace('/', "--"));
-    let snapshot_dir = cache_dir.join(&model_dir_name).join("snapshots").join("main");
+    // If the user set a custom models directory, download there using the flat
+    // "org/name/" layout that scan_models_directory() expects.  Otherwise fall
+    // back to the standard HF cache layout (models--org--name/snapshots/main/).
+    let snapshot_dir = if let Some(dir) = models_directory {
+        voxctrl_core::util::repo_path(dir, repo)
+    } else {
+        let cache_dir = voxctrl_core::models::cache_scanner::effective_cache_dir()
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine HF cache directory"))?;
+        let model_dir_name = format!("models--{}", repo.replace('/', "--"));
+        cache_dir.join(&model_dir_name).join("snapshots").join("main")
+    };
     std::fs::create_dir_all(&snapshot_dir)?;
 
-    let files = &info.hf_files;
+    let files = build_download_list(&info.hf_files, repo, &token);
     if files.is_empty() {
         anyhow::bail!("No files listed for model '{}'", info.id);
     }
@@ -2461,31 +2552,23 @@ fn download_model_files(
     Ok(())
 }
 
-/// Delete a model's HF cache directory and rescan.
+/// Delete a model's downloaded files and rescan.
+///
+/// Uses the path stored in the registry entry (populated by scan_cache) so it
+/// works regardless of whether the model lives in the HF cache or a custom
+/// models directory.
 fn do_delete(model_id: &str, registry: &Arc<Mutex<ModelRegistry>>) {
-    let hf_repo = {
+    // Grab the actual downloaded path from the registry.
+    let model_dir = {
         let reg = registry.lock().unwrap();
-        reg.get(model_id).and_then(|e| e.info.hf_repo.clone())
-    };
-
-    let repo = match hf_repo {
-        Some(r) => r,
-        None => {
-            log::error!("Cannot delete '{}': no HF repo configured", model_id);
-            return;
+        match reg.get(model_id).map(|e| &e.status) {
+            Some(DownloadStatus::Downloaded { path, .. }) => path.clone(),
+            _ => {
+                log::error!("Cannot delete '{}': not downloaded", model_id);
+                return;
+            }
         }
     };
-
-    let cache_dir = match voxctrl_core::models::cache_scanner::effective_cache_dir() {
-        Some(d) => d,
-        None => {
-            log::error!("Cannot determine HF cache directory");
-            return;
-        }
-    };
-
-    let model_dir_name = format!("models--{}", repo.replace('/', "--"));
-    let model_dir = cache_dir.join(&model_dir_name);
 
     if model_dir.is_dir() {
         if let Err(e) = std::fs::remove_dir_all(&model_dir) {
@@ -2495,7 +2578,7 @@ fn do_delete(model_id: &str, registry: &Arc<Mutex<ModelRegistry>>) {
             }
             return;
         }
-        log::info!("Deleted cache dir: {}", model_dir.display());
+        log::info!("Deleted model dir: {}", model_dir.display());
     }
 
     // Rescan so status resets to NotDownloaded
@@ -2522,15 +2605,6 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Shorten a path for display in the table (show last 2 components).
-fn abbreviate_path(path: &std::path::Path) -> String {
-    let components: Vec<_> = path.components().collect();
-    if components.len() <= 2 {
-        return path.display().to_string().replace('\\', "/");
-    }
-    let tail: PathBuf = components[components.len() - 2..].iter().collect();
-    format!("\u{2026}/{}", tail.display().to_string().replace('\\', "/"))
-}
 
 #[cfg(test)]
 mod tests {

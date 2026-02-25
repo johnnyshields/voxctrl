@@ -33,7 +33,7 @@ zluda = ["voxctrl-core/zluda"]
 consent-dialog = ["voxctrl-core/consent-dialog"]
 
 # UI modes (local to binary crate)
-gui = ["dep:tray-icon", "dep:global-hotkey", "dep:winit", "dep:muda", "dep:eframe", "dep:egui", "dep:egui_extras", "dep:ureq", "dep:rfd"]
+gui = ["dep:tray-icon", "dep:global-hotkey", "dep:winit", "dep:muda", "dep:eframe", "dep:egui", "dep:egui_extras", "dep:ureq", "dep:serde_json", "dep:rfd"]
 tui = ["dep:ratatui", "dep:crossterm"]
 
 [dependencies]
@@ -68,6 +68,7 @@ egui_extras = { version = "0.30", optional = true }
 
 # GUI: HTTP client for STT test + file dialog
 ureq = { version = "2", features = ["json"], optional = true }
+serde_json = { version = "1", optional = true }
 rfd  = { version = "0.15", optional = true }
 
 # TUI

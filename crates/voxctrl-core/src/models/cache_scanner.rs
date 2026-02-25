@@ -161,8 +161,7 @@ pub fn scan_models_directory(entries: &mut [ModelEntry], dir: &Path) {
             continue;
         }
         if let Some(ref repo) = entry.info.hf_repo {
-            // repo is "org/name" — look for dir/org/name/
-            let model_dir = dir.join(repo);
+            let model_dir = crate::util::repo_path(dir, repo);
             if model_dir.is_dir() && has_all_files(&model_dir, &entry.info.hf_files) {
                 let size = dir_size(&model_dir);
                 if size > 0 {

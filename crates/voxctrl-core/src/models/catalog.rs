@@ -44,7 +44,7 @@ pub fn all_models() -> Vec<ModelInfo> {
             backend: ModelBackend::Voxtral,
             category: ModelCategory::Stt,
             hf_repo: Some("openai/whisper-tiny".into()),
-            hf_files: vec!["model.safetensors".into(), "config.json".into(), "tokenizer.json".into()],
+            hf_files: vec!["model.safetensors".into()],
             approx_size_bytes: 75 * MB,
         },
         ModelInfo {
@@ -53,7 +53,7 @@ pub fn all_models() -> Vec<ModelInfo> {
             backend: ModelBackend::Voxtral,
             category: ModelCategory::Stt,
             hf_repo: Some("openai/whisper-small".into()),
-            hf_files: vec!["model.safetensors".into(), "config.json".into(), "tokenizer.json".into()],
+            hf_files: vec!["model.safetensors".into()],
             approx_size_bytes: 461 * MB,
         },
         ModelInfo {
@@ -62,7 +62,7 @@ pub fn all_models() -> Vec<ModelInfo> {
             backend: ModelBackend::Voxtral,
             category: ModelCategory::Stt,
             hf_repo: Some("openai/whisper-medium".into()),
-            hf_files: vec!["model.safetensors".into(), "config.json".into(), "tokenizer.json".into()],
+            hf_files: vec!["model.safetensors".into()],
             approx_size_bytes: 1_500 * MB,
         },
         ModelInfo {
@@ -71,7 +71,7 @@ pub fn all_models() -> Vec<ModelInfo> {
             backend: ModelBackend::Voxtral,
             category: ModelCategory::Stt,
             hf_repo: Some("openai/whisper-large-v3".into()),
-            hf_files: vec!["model.safetensors".into(), "config.json".into(), "tokenizer.json".into()],
+            hf_files: vec!["model.safetensors".into()],
             approx_size_bytes: 3_100 * MB,
         },
         ModelInfo {
@@ -80,11 +80,7 @@ pub fn all_models() -> Vec<ModelInfo> {
             backend: ModelBackend::Voxtral,
             category: ModelCategory::Stt,
             hf_repo: Some("mistralai/Voxtral-Mini-4B-Realtime-2602".into()),
-            hf_files: vec![
-                "consolidated.safetensors".into(),
-                "params.json".into(),
-                "tekken.json".into(),
-            ],
+            hf_files: vec!["consolidated.safetensors".into()],
             approx_size_bytes: 9_400 * MB,
         },
         ModelInfo {

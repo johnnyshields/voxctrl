@@ -8320,6 +8320,7 @@ dependencies = [
  "muda",
  "ratatui",
  "rfd",
+ "serde_json",
  "tempfile",
  "tray-icon",
  "ureq 2.12.1",

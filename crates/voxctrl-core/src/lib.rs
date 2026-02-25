@@ -16,6 +16,7 @@ pub mod stt_client;
 pub mod stt_server;
 pub mod vad;
 pub mod gpu;
+pub mod util;
 
 use std::sync::Mutex;
 
